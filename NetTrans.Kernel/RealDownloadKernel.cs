@@ -46,6 +46,14 @@ public sealed class RealDownloadKernel : IDownloadKernel
         public int Generation;
         public bool Removed;
         public bool Restart;
+
+        /// <summary>
+        /// Save path fixed at the first start, after the probe names the file:
+        /// every later start/resume of the same task writes to this exact path,
+        /// so resume keeps appending to its own interrupted file and the
+        /// collision rewrite is decided exactly once per task.
+        /// </summary>
+        public string? SavePath;
     }
 
     public RealDownloadKernel(KernelOptions? options = null)
@@ -191,26 +199,28 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
     public void Remove(IEnumerable<int> ids)
     {
-        var removed = new List<DownloadTask>();
+        var removed = new List<(DownloadTask Task, Runtime? Runtime)>();
 
         lock (_gate)
         {
             foreach (int id in ids)
             {
                 if (Find(id) is not { } task) continue;
-                if (_runtimes.Remove(id, out var runtime))
+                Runtime? runtime = _runtimes.TryGetValue(id, out var found) ? found : null;
+                if (runtime is not null)
                 {
+                    _runtimes.Remove(id);
                     runtime.Removed = true;
                     runtime.Cts?.Cancel();
                 }
                 _tasks.Remove(task);
-                removed.Add(task);
+                removed.Add((task, runtime));
             }
         }
 
-        foreach (var task in removed)
+        foreach (var (task, runtime) in removed)
         {
-            CleanupFiles(task);
+            CleanupFiles(task, runtime);
             TaskRemoved?.Invoke(task);
         }
     }
@@ -313,7 +323,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
             task.NewerVersion = null;
             task.Blocks = new int[BlockCount];
             task.ConnectionSpeeds = Array.Empty<double>();
-            DeleteCheckpoint(task);
+            DeleteCheckpoint(task, runtime);
             Log(task, "按新版本重新开始下载");
 
             if (task.Status == DownloadStatus.Downloading)
@@ -481,7 +491,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
                         task.Blocks = Enumerable.Repeat(1, BlockCount).ToArray();
                         if (task.Size <= 0 && session is not null) task.Size = Math.Max(session.DoneBytes, task.Done);
                         task.Done = task.Size > 0 ? task.Size : task.Done;
-                        DeleteCheckpoint(task);
+                        DeleteCheckpoint(task, runtime);
                         Log(task, "下载完成");
                         raiseCompleted = true;
                         break;
@@ -507,7 +517,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
         if (raiseCompleted)
         {
-            await VerifyChecksumAsync(task);
+            await VerifyChecksumAsync(task, runtime);
             TaskCompleted?.Invoke(task);
         }
 
@@ -555,7 +565,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
     private TransferSession CreateSession(
         DownloadTask task, Runtime runtime, ResourceProbe probe, IReadOnlyDictionary<string, string> headers)
     {
-        var savePath = TargetPath(task);
+        var savePath = ResolveSavePath(task, runtime, probe);
         return new TransferSession(new TransferRequest
         {
             Plan = probe.Plan,
@@ -570,6 +580,75 @@ public sealed class RealDownloadKernel : IDownloadKernel
             CheckpointChanged = checkpoint => PersistCheckpoint(savePath, checkpoint),
             Log = (message, error) => Log(task, message, error),
         });
+    }
+
+    /// <summary>
+    /// Decide the task's one save path at first start. A checkpoint beside the
+    /// target that belongs to this very resource (same plan kind and URL)
+    /// keeps the plain target path — resuming into our own interrupted file;
+    /// anything else (target already on disk, or a stale/foreign checkpoint
+    /// left behind) gets the "name (1).ext" rewrite so nothing on disk is
+    /// silently overwritten. Later starts reuse the fixed path.
+    /// </summary>
+    private string ResolveSavePath(DownloadTask task, Runtime runtime, ResourceProbe probe)
+    {
+        // decided once, under the kernel lock: two tasks probing the same file
+        // name at the same moment must not both see the slot as free
+        lock (_gate)
+        {
+            if (runtime.SavePath is { } fixedPath) return fixedPath;
+
+            var basePath = TargetPath(task);
+            var checkpoint = LoadCheckpoint(basePath);
+            if (checkpoint is not null && CheckpointBelongsTo(checkpoint, probe))
+            {
+                runtime.SavePath = basePath; // our own interrupted download — keep writing to it
+                return basePath;
+            }
+
+            var claimed = _runtimes.Values
+                .Where(other => other.SavePath is not null)
+                .Select(other => Path.GetFullPath(other.SavePath!))
+                .ToHashSet();
+            bool isTaken(string candidate) => File.Exists(candidate) || Directory.Exists(candidate) ||
+                claimed.Contains(Path.GetFullPath(candidate));
+
+            var savePath = NextFreePath(basePath, isTaken);
+            runtime.SavePath = savePath;
+            return savePath;
+        }
+    }
+
+    /// <summary>Whether an on-disk checkpoint describes the resource we just probed.</summary>
+    private static bool CheckpointBelongsTo(TransferCheckpoint checkpoint, ResourceProbe probe) =>
+        probe.Plan switch
+        {
+            TransferPlan.ByteRanges ranges => checkpoint.Kind == "ranges" && checkpoint.Url == ranges.Url,
+            TransferPlan.SegmentFiles files => checkpoint.Kind == "segments" &&
+                files.Segments.Count > 0 && checkpoint.Url == files.Segments[0],
+            _ => false,
+        };
+
+    /// <summary>
+    /// 防碰撞命名: never overwrite what is already on disk. A taken target is
+    /// rewritten as "name (1).ext", "name (2).ext", … with the counter before
+    /// the final extension ("a.tar.gz" → "a.tar (1).gz", no extension →
+    /// "name (1)"). Pure over an existence check so tests can drive it.
+    /// </summary>
+    public static string NextFreePath(string path, Func<string, bool>? exists = null)
+    {
+        exists ??= candidate => File.Exists(candidate) || Directory.Exists(candidate);
+        if (!exists(path)) return path;
+
+        var name = Path.GetFileName(path);
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var extension = Path.GetExtension(name);
+
+        for (int i = 1; ; i++)
+        {
+            var candidate = Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, $"{stem} ({i}){extension}");
+            if (!exists(candidate)) return candidate;
+        }
     }
 
     private IReadOnlyDictionary<string, string> HeadersFor(Runtime runtime)
@@ -652,11 +731,11 @@ public sealed class RealDownloadKernel : IDownloadKernel
     }
 
     // ── checksum / checkpoints / files ────────────────────────────────────
-    private async Task VerifyChecksumAsync(DownloadTask task)
+    private async Task VerifyChecksumAsync(DownloadTask task, Runtime? runtime)
     {
         try
         {
-            var path = TargetPath(task);
+            var path = TargetPathFor(task, runtime);
             var hash = await Task.Run(() => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
             lock (_gate)
             {
@@ -677,8 +756,12 @@ public sealed class RealDownloadKernel : IDownloadKernel
         try
         {
             var path = CheckpointPath(savePath);
-            return File.Exists(path)
-                ? JsonSerializer.Deserialize<TransferCheckpoint>(File.ReadAllText(path))
+            if (!File.Exists(path)) return null;
+            var checkpoint = JsonSerializer.Deserialize<TransferCheckpoint>(File.ReadAllText(path));
+            // corrupt or half-written JSON deserializes to null/garbage here and
+            // must degrade to "no checkpoint" — never throw into the task start
+            return checkpoint is not null && checkpoint.Kind.Length > 0 && checkpoint.Url.Length > 0
+                ? checkpoint
                 : null;
         }
         catch
@@ -689,21 +772,26 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
     private void PersistCheckpoint(string savePath, TransferCheckpoint checkpoint)
     {
+        var path = CheckpointPath(savePath);
+        var temp = path + ".tmp" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(CheckpointPath(savePath), JsonSerializer.Serialize(checkpoint));
+            // write-then-rename: a crash mid-write leaves the old checkpoint
+            // intact instead of a half JSON file that kills resume state
+            File.WriteAllText(temp, JsonSerializer.Serialize(checkpoint));
+            File.Move(temp, path, overwrite: true);
         }
         catch
         {
-            // best effort — a failed checkpoint write only costs resume state
+            try { File.Delete(temp); } catch { /* nothing else to give up */ }
         }
     }
 
-    private void DeleteCheckpoint(DownloadTask task)
+    private void DeleteCheckpoint(DownloadTask task, Runtime? runtime)
     {
         try
         {
-            var path = CheckpointPath(TargetPath(task));
+            var path = CheckpointPath(TargetPathFor(task, runtime));
             if (File.Exists(path)) File.Delete(path);
         }
         catch
@@ -712,15 +800,15 @@ public sealed class RealDownloadKernel : IDownloadKernel
         }
     }
 
-    private void CleanupFiles(DownloadTask task)
+    private void CleanupFiles(DownloadTask task, Runtime? runtime)
     {
-        DeleteCheckpoint(task);
+        DeleteCheckpoint(task, runtime);
         _ = Task.Run(async () =>
         {
             try
             {
                 await Task.Delay(400); // let the winding-down transfer release the handle
-                var path = TargetPath(task);
+                var path = TargetPathFor(task, runtime);
                 if (File.Exists(path)) File.Delete(path);
             }
             catch
@@ -732,6 +820,9 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
     // ── small helpers ─────────────────────────────────────────────────────
     private DownloadTask? Find(int id) => _tasks.FirstOrDefault(t => t.Id == id);
+
+    /// <summary>The fixed save path once the probe fixed it; the computed target before that.</summary>
+    private string TargetPathFor(DownloadTask task, Runtime? runtime) => runtime?.SavePath ?? TargetPath(task);
 
     private void Log(DownloadTask task, string message, bool isError = false)
     {

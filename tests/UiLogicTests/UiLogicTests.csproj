@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless tests for the UI/kernel seam logic on plain net8.0: the generic
+       task manager (event mirroring + marshalling), the app's formatting
+       helpers, and the kernel's speed-limit parsing. No test-framework
+       dependency: main + Check(name, condition, detail) + summary, exit code
+       1 on any failure. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>UiLogicTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>UiLogicTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\NetTrans.Kernel\NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+  <!-- FormatHelpers is pure logic but lives in the WinUI app project; link the
+       file in instead of copying it, so the tests always run the real code. -->
+  <ItemGroup>
+    <Compile Include="..\..\NetTrans\Services\FormatHelpers.cs" Link="Linked\FormatHelpers.cs" />
+  </ItemGroup>
+
+</Project>

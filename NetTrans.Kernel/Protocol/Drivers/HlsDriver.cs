@@ -36,15 +36,15 @@ public sealed class HlsDriver : IProtocolDriver
         {
             var best = playlist.Variants.MaxBy(v => v.Bandwidth);
             context.Log?.Invoke($"主播放列表：选择最高码率变体（{best.Bandwidth} bps）");
-            playlistUrl = best.Url;
-            text = await FetchTextAsync(best.Url, context, cancellation);
+            playlistUrl = DriverHelpers.ResolveUrl(best.Url, playlistUrl);
             try
             {
+                text = await FetchTextAsync(playlistUrl, context, cancellation);
                 playlist = M3u8Playlist.Parse(text);
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                return DriverHelpers.Unsupported(url, DownloadProtocol.Hls, $"变体播放列表无效（{DriverHelpers.Brief(error.Message)}）");
+                return DriverHelpers.Unsupported(url, DownloadProtocol.Hls, $"无法读取变体播放列表（{DriverHelpers.Brief(error.Message)}）");
             }
         }
 

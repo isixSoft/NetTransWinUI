@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text.RegularExpressions;
 using NetTrans.Kernel.Transfer;
 
 namespace NetTrans.Kernel.Protocol.Drivers;
@@ -124,17 +125,27 @@ public sealed class HttpDriver : IProtocolDriver
     private static string? FileName(HttpResponseMessage response)
     {
         var disposition = response.Content.Headers.ContentDisposition;
-        var raw = disposition?.FileNameStar ?? disposition?.FileName;
+        // FileNameStar is an RFC5987 ext-value (percent-encoded, never quoted);
+        // FileName is a quoted-string, so RFC 6266 quoted-pairs (\") are unescaped here.
+        var raw = disposition?.FileNameStar ?? UnescapeQuotedPairs(disposition?.FileName);
         if (string.IsNullOrEmpty(raw)) return null;
         try
         {
-            return Uri.UnescapeDataString(raw.Trim('"'));
+            return Uri.UnescapeDataString(raw);
         }
         catch
         {
-            return raw.Trim('"');
+            return raw;
         }
     }
+
+    private static string? UnescapeQuotedPairs(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        return QuotedPairRegex.Replace(value.Trim('"'), "$1");
+    }
+
+    private static readonly Regex QuotedPairRegex = new(@"\\(.)", RegexOptions.Compiled);
 
     private static DownloadProtocol? Sniff(string? contentType) => contentType switch
     {

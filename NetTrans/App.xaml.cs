@@ -33,7 +33,7 @@ public partial class App : Application
         IDownloadKernel kernel = UseRealKernel
             ? new RealDownloadKernel(new KernelOptions())
             : new SimulatedDownloadKernel();
-        var taskManager = new TaskManager(kernel, DispatcherQueue.GetForCurrentThread());
+        var taskManager = new TaskManager(kernel, new DispatcherQueueDispatcher(DispatcherQueue.GetForCurrentThread()));
 
         ISettingsStore settingsStore = new JsonSettingsStore();
         IClipboardWatcher clipboardWatcher = new ClipboardWatcher();
