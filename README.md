@@ -205,14 +205,14 @@ the site:
 
 - UI is wired end to end (MVVM, CommunityToolkit.Mvvm) — no mock view models.
 - `SimulatedDownloadKernel` is seeded with the handoff's own `SEED` array and
-  ticks on the same 900ms cadence and growth curve — it stays the default so
-  the UI demo runs anywhere. `RealDownloadKernel` (multi-segment HTTP, FTP,
-  HLS, DASH, BT/eD2k metadata, resume, mirrors, rate limiting) sits behind the
-  same `IDownloadKernel` contract; flip `UseRealKernel` in `App.xaml.cs` to
-  run it. Both kernels are exercised by the same harness contract
-  (`dotnet build NetTrans.Kernel` builds anywhere .NET 8 does; the real
-  kernel's transfer paths are covered by a local HTTP Range/HLS/DASH test
-  suite — 49 checks, all passing on Linux).
+  ticks on the same 900ms cadence and growth curve — it remains one switch
+  away for demoing the UI without a network. The default is
+  `RealDownloadKernel` (multi-segment HTTP, FTP, HLS, DASH, BT/eD2k metadata,
+  resume, mirrors, rate limiting); both sit behind the same `IDownloadKernel`
+  contract and either can be picked in `App.xaml.cs` (`UseRealKernel`). The
+  kernel library builds anywhere .NET 8 does (`dotnet build NetTrans.Kernel`),
+  and the real kernel's transfer paths are covered by a local HTTP
+  Range/HLS/DASH test suite — 49 checks, all passing on Linux.
 - Settings persist **portably**, next to the executable
   (`NetTrans.settings.json`), falling back to `%LOCALAPPDATA%\NetTrans` when that
   directory is read-only — matching the 设置 sheet's promise of no registry writes.
