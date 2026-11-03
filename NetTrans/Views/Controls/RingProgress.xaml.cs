@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 
 namespace NetTrans.Views.Controls;
 
@@ -33,6 +34,8 @@ public sealed partial class RingProgress : UserControl
     public static readonly DependencyProperty SubtitleProperty =
         DependencyProperty.Register(nameof(Subtitle), typeof(string), typeof(RingProgress),
             new PropertyMetadata("", (d, _) => ((RingProgress)d).Apply()));
+
+    private bool _placed;
 
     public double Diameter
     {
@@ -76,6 +79,30 @@ public sealed partial class RingProgress : UserControl
         PercentText.Text = Percent;
         SubText.Text = Subtitle;
         if (ArcBrush is not null) Arc.Stroke = ArcBrush;
-        Arc.StrokeDashOffset = DashUnits * (1 - Math.Clamp(Fraction, 0, 1));
+
+        double target = DashUnits * (1 - Math.Clamp(Fraction, 0, 1));
+
+        // The first placement snaps; later updates ride the CSS transition.
+        if (!_placed || !IsLoaded)
+        {
+            Arc.StrokeDashOffset = target;
+            _placed = true;
+            return;
+        }
+
+        // CSS: transition: stroke-dashoffset .6s linear.
+        var frames = new DoubleAnimationUsingKeyFrames { EnableDependentAnimation = true };
+        frames.KeyFrames.Add(new LinearDoubleKeyFrame
+        {
+            KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(600)),
+            Value = target,
+        });
+
+        Storyboard.SetTarget(frames, Arc);
+        Storyboard.SetTargetProperty(frames, "StrokeDashOffset");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(frames);
+        storyboard.Begin();
     }
 }

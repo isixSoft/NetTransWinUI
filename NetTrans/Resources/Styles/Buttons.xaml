@@ -61,6 +61,49 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
 
+    <!-- .nav__b.act: the 显示与排序 button carries a blue fill while a category
+         filter is on; its own hover is .9 rather than the base .6 -->
+    <Style x:Key="NavButtonActiveStyle" TargetType="Button">
+        <Setter Property="Background" Value="{ThemeResource BlueBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource OnAccentBrush}"/>
+        <Setter Property="FontFamily" Value="{StaticResource UiFontFamily}"/>
+        <Setter Property="FontSize" Value="15"/>
+        <Setter Property="Padding" Value="2,4"/>
+        <Setter Property="CornerRadius" Value="7"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal"/>
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="Root.Opacity" Value="0.9"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="Root.Opacity" Value="0.6"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <ContentPresenter
+                            x:Name="Presenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- .tb: the toolbar's seven 22px icons -->
     <Style x:Key="ToolButtonStyle" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>

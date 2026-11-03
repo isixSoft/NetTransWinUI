@@ -68,7 +68,7 @@
         <controls:SegmentedControl
             x:Name="Tabs"
             Grid.Row="1"
-            Margin="12,11,12,11"
+            Margin="12,0,12,11"
             SelectionChanged="OnTabChanged"/>
 
         <!-- ── .side__body ───────────────────────────────────────────────── -->

@@ -147,8 +147,13 @@ public sealed partial class TaskRow : UserControl
 
         ToggleButton.Width = dense ? 46 : 64;
         ToggleGlyph.IconSize = dense ? 13 : 17;
+        ToggleLabel.FontSize = dense ? 11 : 12.5;
         RemoveGlyph.IconSize = dense ? 13 : 17;
         RemoveLabel.FontSize = dense ? 11 : 12.5;
+
+        // `.card.dense .badge`: the 完成 badge shrinks with the row.
+        DoneBadge.Padding = dense ? new Thickness(6, 1, 6, 1) : new Thickness(7, 2, 7, 2);
+        DoneBadgeText.FontSize = dense ? 10 : 11;
 
         ApplySeparator();
         ApplyProgress(animate: false);
