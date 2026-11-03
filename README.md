@@ -195,9 +195,10 @@ the site:
 - **Typeface.** Windows has no SF Pro. The handoff's own fallback chain is
   Inter Tight → system-ui, and Segoe UI Variable is the closest system face, so
   it leads the stack in `Tokens.xaml`.
-- **Dark theme.** The handoff only specifies a light palette. `Tokens.xaml` adds
-  the iOS system-dark counterpart of every token so the app can follow the
-  Windows theme without inventing new semantics.
+- **Dark theme.** The handoff only specifies a light palette, so the app pins
+  `RequestedTheme="Light"` to stay 1:1 with the prototype on any Windows
+  theme. `Tokens.xaml` still carries the iOS system-dark counterpart of every
+  token for the day a dark design exists — flip the attribute then.
 - **Tabular figures.** WinUI has no font-feature API on `TextBlock`; Segoe UI
   Variable's lining figures are already fixed-width, so numbers still align.
 
