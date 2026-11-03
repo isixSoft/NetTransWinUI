@@ -11,8 +11,9 @@ using NetTrans.Kernel.Transfer;
 namespace NetworkTests;
 
 /// <summary>
-/// NetTrans.Kernel 网络层测试（10 个方向，18 条独立 Check）。
+/// NetTrans.Kernel 网络层测试（10 个方向，19 条独立用例）。
 /// 断言全部基于内核源码与 BCL 的真实行为；确认的内核问题以"已知失败"标注，不强行 PASS。
+/// （历史注：2b filename 引号转义与 7b HLS 相对变体 URL 曾是已知内核缺陷，均已修复。）
 /// </summary>
 internal static class Program
 {
@@ -35,7 +36,7 @@ internal static class Program
         await RunAsync("1a. 协议检测：URL 大写扩展名 .M3U8/.MPD/.TORRENT", () => DetectionUpperCaseAsync());
         await RunAsync("1b. 协议检测：fragment/端口/magnet 无 dn/ed2k 字段不全/裸域名", () => DetectionEdgesAsync());
         await RunAsync("2a. HTTP 命名：Content-Disposition filename*（RFC5987 百分号编码）", () => NamingStarAsync(server));
-        await RunAsync("2b. HTTP 命名：filename 带引号转义", () => NamingQuotedEscapeAsync(server), knownBug: true);
+        await RunAsync("2b. HTTP 命名：filename 带引号转义", () => NamingQuotedEscapeAsync(server));
         await RunAsync("2c. HTTP 命名：无 disposition 时取 URL 末段", () => NamingUrlSegmentAsync(server));
         await RunAsync("2d. HTTP 命名：URL 以 / 结尾时的回退名", () => NamingTrailingSlashAsync(server));
         await RunAsync("3.  HTTP 重试：某次 GET 返回 500 后恢复，任务最终完成", () => RetryOn500Async(server));
@@ -47,7 +48,7 @@ internal static class Program
         await RunAsync("6b. DASH：SegmentList（Initialization+SegmentURL）计划", () => DashSegmentListAsync(server));
         await RunAsync("6c. DASH：SegmentBase 回退为 ByteRanges 计划", () => DashSegmentBaseAsync(server));
         await RunAsync("7a. HLS：../ 相对路径/查询串/绝对 URL 分段 + 同码率取第一个变体", () => HlsEdgesAsync(server));
-        await RunAsync("7b. HLS：master 相对变体 URL（按 RFC8216 应可用）", () => HlsRelativeVariantAsync(server), knownBug: true);
+        await RunAsync("7b. HLS：master 相对变体 URL（按 RFC8216 应可用）", () => HlsRelativeVariantAsync(server));
         await RunAsync("8.  SOCKS5：RFC1928 握手 + CONNECT + 可读写流", Socks5RoundtripAsync);
         await RunAsync("9.  Remove 中途取消：TaskRemoved + 文件句柄释放", () => RemoveMidwayAsync(server));
         await RunAsync("10. Redownload：Done 归零重新下载 + 日志\"重新开始\"", () => RedownloadAsync(server));

@@ -219,6 +219,72 @@ Section("TaskManager · commands forward intent and re-apply the snapshot");
         $"speed={manager.TotalSpeed}");
 }
 
+Section("TaskManager · Add() on a deferred dispatcher (non-UI callers)");
+{
+    var kernel = new FakeKernel();
+    var dispatcher = new TestDispatcher { RunInline = false };
+    var manager = NewManager(kernel, dispatcher);
+
+    var vm = manager.Add(Req("a.zip")); // TaskAdded is queued, not yet applied
+    Check("Add() returns a valid wrapper even before the dispatcher flush",
+        vm.Task.Name == "a.zip" && manager.Tasks.Count == 1
+        && ReferenceEquals(manager.Tasks[0], vm),
+        $"count={manager.Tasks.Count}");
+
+    dispatcher.Flush();
+    Check("the flushed TaskAdded does not duplicate the mirrored entry",
+        manager.Tasks.Count == 1 && ReferenceEquals(manager.Tasks[0], vm),
+        $"count={manager.Tasks.Count}");
+}
+
+Section("TaskManager · SyncOrder materializes tasks the mirror missed");
+{
+    var kernel = new FakeKernel();
+    kernel.MakeTask("a.zip", DownloadStatus.Queued);
+    var manager = NewManager(kernel, new TestDispatcher());
+
+    // A task the kernel tracks but whose TaskAdded has not been marshalled
+    // (or was never raised): the move event must not blow up on it.
+    kernel.MakeTask("late.mp4", DownloadStatus.Queued);
+    kernel.Reorder(2, 1); // the late task also jumps the queue
+    kernel.RaiseTaskMoved();
+
+    Check("the unseen task is materialized at its desired position instead of throwing",
+        manager.Tasks.Count == 2 && manager.Tasks[0].Task.Name == "late.mp4"
+        && manager.Tasks[1].Task.Name == "a.zip",
+        $"count={manager.Tasks.Count} order={string.Join(',', manager.Tasks.Select(vm => vm.Task.Name))}");
+    kernel.RaiseTaskMoved();
+    Check("a second move sync stays stable and does not duplicate",
+        manager.Tasks.Count == 2
+        && manager.Tasks.Select(vm => vm.Task.Id).SequenceEqual(kernel.Tasks.Select(t => t.Id)),
+        $"count={manager.Tasks.Count}");
+}
+
+Section("TaskManager · a tick repaints a row whose running state just flipped");
+{
+    var kernel = new FakeKernel();
+    var t1 = kernel.MakeTask("live.zip", DownloadStatus.Downloading);
+    kernel.MakeTask("idle.mp4", DownloadStatus.Paused);
+    var manager = NewManager(kernel, new TestDispatcher());
+
+    kernel.RaiseTicked(new KernelSnapshot(1, 0, IsRunning: true, Array.Empty<double>())); // prime the delta
+    int liveAfterFirst = manager.Tasks[0].Refreshes;
+
+    t1.Status = DownloadStatus.Paused; // flips without a TaskUpdated event
+    kernel.RaiseTicked(new KernelSnapshot(0, 0, IsRunning: false, Array.Empty<double>()));
+    Check("the transition tick repaints the row that stopped running",
+        manager.Tasks[0].Refreshes == liveAfterFirst + 1,
+        $"live={manager.Tasks[0].Refreshes} expected={liveAfterFirst + 1}");
+    Check("the always-idle row is still not repainted",
+        manager.Tasks[1].Refreshes == 0,
+        $"idle={manager.Tasks[1].Refreshes}");
+
+    kernel.RaiseTicked(new KernelSnapshot(0, 0, IsRunning: false, Array.Empty<double>()));
+    Check("settled rows go back to being skipped on later ticks",
+        manager.Tasks[0].Refreshes == liveAfterFirst + 1,
+        $"live={manager.Tasks[0].Refreshes}");
+}
+
 // ── 2. FormatHelpers (linked straight from NetTrans/Services) ─────────────
 
 Section("FormatHelpers · Bytes");

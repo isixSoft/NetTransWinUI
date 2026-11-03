@@ -45,11 +45,14 @@ The network side is split in two, and the solution mirrors it:
   `RealDownloadKernel` — the multi-protocol transfer engine described below.
   `App.xaml.cs` picks one with a single `UseRealKernel` switch; nothing else in
   the app changes.
-- **`NetTrans` (the app)** owns the presentation. `Services/TaskManager` is the
-  only consumer of that contract: it marshals kernel events onto the UI thread
-  via `DispatcherQueue`, mirrors the kernel queue into the
-  `ObservableCollection` the shell binds, and forwards user intent back down as
-  kernel commands. View models and views never touch the kernel directly.
+- **`NetTrans` (the app)** owns the presentation. The mirroring engine,
+  `NetTrans.Kernel.TaskManager<TItem>`, is generic over the host's per-task
+  view wrapper and lives in the kernel so it stays UI-free and testable
+  headlessly: it marshals kernel events onto the UI thread, mirrors the kernel
+  queue into the `ObservableCollection` the shell binds, and forwards user
+  intent back down as kernel commands. The app's `Services/TaskManager` is a
+  thin subclass that binds it to `DownloadItemViewModel` — view models and
+  views never touch the kernel directly.
 
 ## Network protocol architecture (Ghost Downloader alignment)
 
@@ -62,7 +65,9 @@ pretending.
 ```
 NetTrans.Kernel/
   KernelOptions.cs            UA / connections / concurrency / retry / speed /
-                              proxy / headers / mirror resolver / TLS handler factory
+                              proxy / headers / mirror resolver / TLS handler factory /
+                              external engine (runner delegate + command template)
+  TaskManager.cs              UI-agnostic kernel↔UI seam, generic over the view wrapper
   RealDownloadKernel.cs       priority scheduling, MaxSimultaneous slots, tick,
                               SHA-256 verify, checkpoint lifecycle
   Protocol/
@@ -87,7 +92,8 @@ NetTrans.Kernel/
     TransferSession.cs        one run: workers, retry, mirror failover, pause/resume
     SpeedLimiter.cs           token bucket; global = min(global, per-task), live retune
     MirrorSourceSet.cs        round-robin + failure demotion
-  Net/Socks5Connector.cs      RFC1928 CONNECT for socks5:// proxies
+  Net/Socks5Connector.cs      RFC1928 CONNECT + RFC1929 username/password auth
+  Net/ProxyInfo.cs            socks5/http(s) proxy URL parsing (userinfo = credentials)
 ```
 
 A probe resolves any URL into a `TransferPlan` — `ByteRanges` (multi-segment,
@@ -97,6 +103,13 @@ the user). Resume state lives in a `.nettrans.json` checkpoint beside the
 target file: range tables for HTTP, committed-prefix counters plus a playlist
 fingerprint for HLS/DASH, validated against size/ETag before a resume is
 trusted.
+
+The `ExternalEngine` slot is executable: hosts supply either an
+`KernelOptions.EngineRunner` delegate (typed plan → produce the file) or an
+`ExternalEngineCommand` shell template with `{url}` `{path}` `{name}`
+placeholders; a non-zero exit or a missing file fails the task with the
+engine's output logged. With neither configured the task fails honestly —
+no silent fallback.
 
 ### Capability matrix vs. Ghost Downloader
 
@@ -108,12 +121,12 @@ trusted.
 | MPEG-DASH | Yes (N_m3u8DL-RE) | Yes (template/list/base) |
 | Live HLS / encrypted HLS | via N_m3u8DL-RE | Honest `Unsupported` |
 | Magnet / .torrent metadata | Yes (libtorrent) | Yes (bencode + magnet parse) |
-| BitTorrent data plane | Yes (libtorrent ≥ 2.0.13) | External-engine slot — clear error, no pretense |
+| BitTorrent data plane | Yes (libtorrent ≥ 2.0.13) | External-engine slot (`EngineRunner` / command template) — clear error when unconfigured |
 | eD2k | Yes (Kelpie) | Link metadata + external-engine slot |
 | yt-dlp (YouTube, Bilibili…) | Yes | Not built in — same slot can host it |
 | aria2 RPC control | Yes | Not implemented |
 | Browser-extension sniffing | Yes | Not implemented (app ships a sniff sheet) |
-| HTTP(S) / SOCKS5 proxy | Yes | Yes (`WebProxy` / `Socks5Connector`) |
+| HTTP(S) / SOCKS5 proxy | Yes | Yes (`WebProxy` / `Socks5Connector`, incl. SOCKS5 RFC1929 username/password and userinfo credentials) |
 | Browser TLS fingerprint | Yes (wreq) | Slot only (`HttpHandlerFactory`); .NET SslStream can't imitate a browser handshake |
 | Custom UA / headers / cookies | Yes | Yes (`KernelOptions`) |
 | Mirror acceleration (GitHub / HuggingFace) | Yes (curated mirror lists) | Generalized: any `MirrorResolver`, validated by size + ETag |
@@ -133,6 +146,7 @@ fallback.
 ```
 NetTrans.Kernel/            Download kernel -- plain net8.0, zero UI references
   IDownloadKernel.cs        The boundary: commands + events
+  TaskManager.cs            The UI-agnostic kernel↔UI seam (generic core)
   SimulatedDownloadKernel.cs Timer-driven simulation on the handoff's SEED
   RealDownloadKernel.cs     The real engine -- see "Network protocol architecture" above
   DownloadTask.cs           The kernel's task record (was Models/DownloadItem)
@@ -153,12 +167,28 @@ NetTrans/
     Sheets/                 Add / Batch / Torrent / Sniff / Settings
   ViewModels/               ShellViewModel, DownloadItemViewModel
   Models/                   AppSettings
-  Services/                 TaskManager (the kernel↔UI seam), DockManager, Easing,
+  Services/                 TaskManager (thin subclass binding the kernel's generic
+                            manager to DownloadItemViewModel), KernelOptionsFactory
+                            (AppSettings → KernelOptions), DockManager, Easing,
                             FormatHelpers, ThemeBrushes, clipboard + settings stores
   Resources/                Tokens.xaml (iOS tokens as ThemeDictionaries), Icons.xaml,
                             Styles/ (Text, Surfaces, Buttons, Inputs, Shadows)
   Converters/               BindingHelpers (x:Bind function bindings)
+tests/                      Headless console suites -- net8.0, zero NuGet packages
+  UiLogicTests/             TaskManager mirroring + view-model + settings logic
+  NetworkTests/             Protocol detection / drivers / plans over a local HTTP server
+  FileManagementTests/      Save-path collision naming, checkpoint lifecycle, atomic writes
+  EndToEndTests/            Full pipeline over a local server: multi-segment bytes,
+                            SHA-256, 96-block grid, same-kernel resume, HLS/DASH
+                            concatenation, no-Range fallback, priority scheduling
+  SetupTests/               AppSettings → KernelOptions mapping + settings-store round trip
+  ProxyTests/               SOCKS5 RFC1929 handshake mocks + ProxyInfo.Parse table
+  ExternalEngineTests/      EngineRunner delegate + command-template execution
 ```
+
+Every suite is a plain `dotnet run` (Linux-clean); assertion style is a shared
+`Check`/`That`/`Equal` helper with a one-line summary and a non-zero exit code
+on failure.
 
 ## Building
 
@@ -212,8 +242,10 @@ the site:
   resume, mirrors, rate limiting); both sit behind the same `IDownloadKernel`
   contract and either can be picked in `App.xaml.cs` (`UseRealKernel`). The
   kernel library builds anywhere .NET 8 does (`dotnet build NetTrans.Kernel`),
-  and the real kernel's transfer paths are covered by a local HTTP
-  Range/HLS/DASH test suite — 49 checks, all passing on Linux.
+  and its transfer paths are covered by the headless suites under `tests/`
+  (188 checks across 7 projects — UI mirroring, protocol plans, file/checkpoint
+  management, end-to-end transfers, settings mapping, proxy auth, external
+  engine — all passing on Linux).
 - Settings persist **portably**, next to the executable
   (`NetTrans.settings.json`), falling back to `%LOCALAPPDATA%\NetTrans` when that
   directory is read-only — matching the 设置 sheet's promise of no registry writes.

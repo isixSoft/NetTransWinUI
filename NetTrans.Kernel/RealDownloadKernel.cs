@@ -93,12 +93,30 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
         if (options.Proxy is not { Length: > 0 } proxy) return handler;
 
-        if (proxy.StartsWith("socks5://", StringComparison.OrdinalIgnoreCase))
+        // ProxyInfo.Parse validates the string first; a proxy it cannot parse
+        // keeps the previous fallback behavior below (Uri/WebProxy reject it
+        // exactly as they always did).
+        var proxyInfo = ProxyInfo.Parse(proxy);
+        if (proxyInfo?.Scheme == "socks5"
+            || (proxyInfo is null && proxy.StartsWith("socks5://", StringComparison.OrdinalIgnoreCase)))
         {
+            // Userinfo survives in Uri.UserInfo, so Socks5Connector picks up the
+            // RFC 1929 credentials straight from it.
             var uri = new Uri(proxy);
             handler.ConnectCallback = async (context, cancellation) =>
                 await Socks5Connector.ConnectAsync(
                     uri, context.DnsEndPoint.Host, context.DnsEndPoint.Port, cancellation);
+            return handler;
+        }
+
+        if (proxyInfo is { Username: not null } parsed)
+        {
+            handler.Proxy = new System.Net.WebProxy(
+                new UriBuilder(parsed.Scheme, parsed.Host, parsed.Port).Uri)
+            {
+                Credentials = new System.Net.NetworkCredential(
+                    parsed.Username, parsed.Password ?? string.Empty),
+            };
             return handler;
         }
 
@@ -579,6 +597,10 @@ public sealed class RealDownloadKernel : IDownloadKernel
             Checkpoint = LoadCheckpoint(savePath),
             CheckpointChanged = checkpoint => PersistCheckpoint(savePath, checkpoint),
             Log = (message, error) => Log(task, message, error),
+            EngineRunner = _options.EngineRunner,
+            ExternalEngineCommand = _options.ExternalEngineCommand,
+            TaskUrl = task.Url,
+            TaskName = task.Name,
         });
     }
 

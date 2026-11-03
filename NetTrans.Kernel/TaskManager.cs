@@ -24,6 +24,13 @@ public sealed class TaskManager<TItem>
     private readonly Func<TItem, bool> _isRunning;
     private readonly Dictionary<int, TItem> _index = new();
 
+    /// <summary>
+    /// Items that were running as of the last tick -- the delta used to repaint
+    /// rows whose running state flipped between ticks even when the kernel did
+    /// not raise a per-task event for the transition.
+    /// </summary>
+    private readonly HashSet<TItem> _wasRunning = new();
+
     public TaskManager(IDownloadKernel kernel, IDispatcher dispatcher,
         Func<DownloadTask, TItem> createItem, Action<TItem> refreshItem,
         Func<TItem, bool> isRunning)
@@ -66,7 +73,11 @@ public sealed class TaskManager<TItem>
     // ── user intent, forwarded to the kernel ──────────────────────────────
     public TItem Add(NewDownloadRequest request)
     {
-        var task = _kernel.Add(request); // TaskAdded fires inline on this thread
+        var task = _kernel.Add(request); // raises TaskAdded, which is marshalled through the dispatcher
+        // The posted TaskAdded handler may not have run yet (deferred
+        // dispatcher, non-UI caller), so establish the mirror entry here and
+        // let the posted handler skip tasks the mirror already holds.
+        if (!_index.ContainsKey(task.Id)) AddToView(task);
         return _index[task.Id];
     }
 
@@ -87,11 +98,18 @@ public sealed class TaskManager<TItem>
     }
 
     // ── kernel events, marshalled through the dispatcher ──────────────────
-    private void OnTaskAdded(DownloadTask task) => Post(() => AddToView(task));
+    private void OnTaskAdded(DownloadTask task) => Post(() =>
+    {
+        if (!_index.ContainsKey(task.Id)) AddToView(task); // Add() may have mirrored it already
+    });
 
     private void OnTaskRemoved(DownloadTask task) => Post(() =>
     {
-        if (_index.Remove(task.Id, out var vm)) Tasks.Remove(vm);
+        if (_index.Remove(task.Id, out var vm))
+        {
+            _wasRunning.Remove(vm);
+            Tasks.Remove(vm);
+        }
     });
 
     private void OnTaskUpdated(DownloadTask task) => Post(() =>
@@ -113,7 +131,13 @@ public sealed class TaskManager<TItem>
         Apply(snapshot);
         foreach (var vm in Tasks)
         {
-            if (_isRunning(vm)) _refreshItem(vm);
+            // Live rows refresh every tick. A row whose running state flipped
+            // since the last tick also refreshes now: without this, the tick
+            // that observes a transition would skip it (the row would keep its
+            // previous presentation until some other event repainted it).
+            bool running = _isRunning(vm);
+            if (running || _wasRunning.Contains(vm)) _refreshItem(vm);
+            if (running) _wasRunning.Add(vm); else _wasRunning.Remove(vm);
         }
 
         Ticked?.Invoke(this, EventArgs.Empty);
@@ -134,7 +158,17 @@ public sealed class TaskManager<TItem>
         var desired = _kernel.Tasks;
         for (int i = 0; i < desired.Count; i++)
         {
-            var vm = _index[desired[i].Id];
+            var task = desired[i];
+            if (!_index.TryGetValue(task.Id, out var vm))
+            {
+                // A task whose TaskAdded event is still in flight (or was never
+                // marshalled): materialize it at its desired position instead
+                // of throwing.
+                vm = _createItem(task);
+                _index[task.Id] = vm;
+                Tasks.Insert(i, vm);
+            }
+
             int at = IndexOf(vm);
             if (at != i) Tasks.Move(at, i);
         }

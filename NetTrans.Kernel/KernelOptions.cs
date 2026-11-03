@@ -1,3 +1,5 @@
+using NetTrans.Kernel.Protocol;
+
 namespace NetTrans.Kernel;
 
 /// <summary>
@@ -50,4 +52,22 @@ public sealed class KernelOptions
 
     /// <summary>Checkpoints (断点续传) are written next to the target file with this suffix.</summary>
     public string CheckpointSuffix { get; set; } = ".nettrans.json";
+
+    /// <summary>
+    /// External-engine slot for the BT / eD2k data plane: when a probe resolves
+    /// to an <see cref="TransferPlan.ExternalEngine"/> plan, this runner is
+    /// invoked with the plan, the resolved save path and a cancellation token.
+    /// Return true when the engine produced the file at the save path. Wins
+    /// over <see cref="ExternalEngineCommand"/> when both are set.
+    /// </summary>
+    public Func<TransferPlan.ExternalEngine, string, CancellationToken, Task<bool>>? EngineRunner { get; set; }
+
+    /// <summary>
+    /// Shell command template for the external engine, with {url} {path} {name}
+    /// placeholders (url = the task's URL, path = the resolved save path,
+    /// name = the task name). Executed via "cmd /c" on Windows and
+    /// "/bin/sh -c" elsewhere; exit code 0 plus the file present at the save
+    /// path completes the task. <see cref="EngineRunner"/> wins when both are set.
+    /// </summary>
+    public string? ExternalEngineCommand { get; set; }
 }

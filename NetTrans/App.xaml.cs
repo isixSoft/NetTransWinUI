@@ -29,13 +29,14 @@ public partial class App : Application
         ThemeBrushes.SetTheme(Current.RequestedTheme);
 
         // The download kernel lives in its own UI-free assembly; TaskManager is
-        // the only seam between it and the observable UI tree.
+        // the only seam between it and the observable UI tree. Settings load
+        // first so the real kernel boots from the 设置 sheet's values.
+        ISettingsStore settingsStore = new JsonSettingsStore();
         IDownloadKernel kernel = UseRealKernel
-            ? new RealDownloadKernel(new KernelOptions())
+            ? new RealDownloadKernel(KernelOptionsFactory.Create(settingsStore.Load()))
             : new SimulatedDownloadKernel();
         var taskManager = new TaskManager(kernel, new DispatcherQueueDispatcher(DispatcherQueue.GetForCurrentThread()));
 
-        ISettingsStore settingsStore = new JsonSettingsStore();
         IClipboardWatcher clipboardWatcher = new ClipboardWatcher();
 
         var shellViewModel = new ShellViewModel(taskManager, clipboardWatcher, settingsStore);

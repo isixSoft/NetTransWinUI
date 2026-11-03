@@ -44,6 +44,26 @@ public sealed class TransferRequest
     /// <summary>Periodic + on-pause persistence sink (the kernel writes the file).</summary>
     public Action<TransferCheckpoint>? CheckpointChanged { get; init; }
 
+    /// <summary>
+    /// External-engine slot (BT / eD2k data plane): invoked with the plan, the
+    /// resolved save path and the cancellation token; return true when the
+    /// engine produced the file at the save path. Wins over
+    /// <see cref="ExternalEngineCommand"/>.
+    /// </summary>
+    public Func<TransferPlan.ExternalEngine, string, CancellationToken, Task<bool>>? EngineRunner { get; init; }
+
+    /// <summary>
+    /// Shell command template for the external engine with {url} {path} {name}
+    /// placeholders (task URL / resolved save path / task name). Runs via
+    /// cmd /c on Windows and /bin/sh -c elsewhere; exit code 0 plus the file
+    /// present at the save path completes the task.
+    /// </summary>
+    public string? ExternalEngineCommand { get; init; }
+
+    /// <summary>Task URL and task name, filling the external-engine command template.</summary>
+    public string? TaskUrl { get; init; }
+    public string? TaskName { get; init; }
+
     public LogSink? Log { get; init; }
 }
 
@@ -116,6 +136,9 @@ public sealed class TransferSession
                 TransferPlan.ByteRanges ranges => await RunRangesAsync(ranges, cancellation),
                 TransferPlan.FtpFile ftp => await RunFtpAsync(ftp, cancellation),
                 TransferPlan.SegmentFiles files => await RunSegmentFilesAsync(files, cancellation),
+                TransferPlan.ExternalEngine engine when _request.EngineRunner is not null ||
+                    !string.IsNullOrWhiteSpace(_request.ExternalEngineCommand)
+                        => await RunExternalEngineAsync(engine, cancellation),
                 TransferPlan.ExternalEngine engine => new TransferOutcome(TransferOutcomeKind.Failed,
                     $"需要外部引擎（{engine.Engine}）—— 引擎插槽未接入：{engine.Detail}"),
                 TransferPlan.Unsupported unsupported => new TransferOutcome(TransferOutcomeKind.Failed, unsupported.Reason),
@@ -127,6 +150,115 @@ public sealed class TransferSession
             return new TransferOutcome(TransferOutcomeKind.Paused, null);
         }
     }
+
+    // ── external-engine mode (BT / eD2k data plane) ───────────────────────
+    /// <summary>
+    /// The deliberate engine slot: moving bytes for BT / eD2k needs a
+    /// host-side engine, injected either as a runner delegate or as a shell
+    /// command template ({url} {path} {name}). Success means the engine
+    /// produced the file at the save path — reported exactly like a finished
+    /// byte transfer; with neither slot configured the plan still fails honestly.
+    /// </summary>
+    private async Task<TransferOutcome> RunExternalEngineAsync(TransferPlan.ExternalEngine plan, CancellationToken cancellation)
+    {
+        Log($"外部引擎接管：{plan.Engine}");
+
+        if (_request.EngineRunner is { } runner)
+        {
+            try
+            {
+                bool produced = await runner(plan, _request.SavePath, cancellation);
+                if (produced && File.Exists(_request.SavePath)) return EngineFileOutcome();
+                Log(produced ? "外部引擎报告完成，但未产出文件" : "外部引擎运行失败", isError: true);
+                return new TransferOutcome(TransferOutcomeKind.Failed,
+                    produced ? "外部引擎未产出文件" : "外部引擎运行失败");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                Log($"外部引擎运行异常（{Brief(error.Message)}）", isError: true);
+                return new TransferOutcome(TransferOutcomeKind.Failed, Brief(error.Message));
+            }
+        }
+
+        return await RunExternalEngineCommandAsync(cancellation);
+    }
+
+    private async Task<TransferOutcome> RunExternalEngineCommandAsync(CancellationToken cancellation)
+    {
+        string command = (_request.ExternalEngineCommand ?? string.Empty)
+            .Replace("{url}", _request.TaskUrl ?? string.Empty)
+            .Replace("{path}", _request.SavePath)
+            .Replace("{name}", _request.TaskName ?? string.Empty);
+        Log($"执行外部命令：{command}");
+
+        var start = new ProcessStartInfo
+        {
+            FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+        start.ArgumentList.Add(command);
+
+        using var process = new Process { StartInfo = start };
+        try
+        {
+            process.Start();
+        }
+        catch (Exception error)
+        {
+            Log($"外部引擎启动失败（{Brief(error.Message)}）", isError: true);
+            return new TransferOutcome(TransferOutcomeKind.Failed, Brief(error.Message));
+        }
+
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(cancellation);
+        }
+        catch (OperationCanceledException)
+        {
+            // pause/remove must not leave the engine process behind
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            try { await Task.WhenAll(stdout, stderr); } catch { /* pipes are closing */ }
+            throw;
+        }
+
+        string errorText = await stderr;
+        _ = await stdout; // captured for completeness; only stderr feeds the failure log
+
+        if (process.ExitCode == 0)
+        {
+            if (File.Exists(_request.SavePath)) return EngineFileOutcome();
+            Log("外部引擎已退出，但未产出文件", isError: true);
+            return new TransferOutcome(TransferOutcomeKind.Failed, "外部引擎未产出文件");
+        }
+
+        var briefError = Brief(FirstLine(errorText));
+        Log(briefError.Length > 0
+            ? $"外部引擎退出码 {process.ExitCode}：{briefError}"
+            : $"外部引擎退出码 {process.ExitCode}", isError: true);
+        return new TransferOutcome(TransferOutcomeKind.Failed, $"外部引擎退出码 {process.ExitCode}");
+    }
+
+    /// <summary>The engine produced the file: surface it like a finished byte transfer.</summary>
+    private TransferOutcome EngineFileOutcome()
+    {
+        long length = new FileInfo(_request.SavePath).Length;
+        Interlocked.Exchange(ref _total, length);
+        Interlocked.Exchange(ref _done, length);
+        Log($"外部引擎完成：{FormatSize(length)}");
+        return new TransferOutcome(TransferOutcomeKind.Completed, null);
+    }
+
+    private static string FirstLine(string text) => text.Split('\n', 2)[0].TrimEnd('\r').Trim();
 
     // ── byte-range mode (HTTP) ────────────────────────────────────────────
     private async Task<TransferOutcome> RunRangesAsync(TransferPlan.ByteRanges plan, CancellationToken cancellation)
