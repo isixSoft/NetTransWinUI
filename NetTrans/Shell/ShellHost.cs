@@ -69,7 +69,7 @@ public sealed class ShellHost : IDisposable
         _dock.MainMoved += (_, _) => PositionIsland();
 
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        _viewModel.Engine.Ticked += (_, _) => RefreshIsland();
+        _viewModel.Manager.Ticked += (_, _) => RefreshIsland();
 
         PlaceFrames();
         ApplyInspectorVisibility();

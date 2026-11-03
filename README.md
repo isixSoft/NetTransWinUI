@@ -30,11 +30,34 @@ side, unpackaged (no MSIX required to run).
 | 贴边隐藏, 老板键 Ctrl+Alt+H | `Shell/ShellHost.cs` (`RegisterHotKey`, edge slide) |
 | Design tokens, icon set | `Resources/Tokens.xaml`, `Resources/Icons.xaml` |
 
+## Layering
+
+The network side is split in two, and the solution mirrors it:
+
+- **`NetTrans.Kernel`** owns the tasks. It is a plain `net8.0` library whose
+  csproj carries no Windows/WinUI references, so nothing inside it can reach a
+  dispatcher, a XAML control or a view model. It exposes exactly one contract,
+  `IDownloadKernel`: commands (`Add`, `Toggle`, `Remove`, `ToggleAll`,
+  `MoveToFront/Back`, `Redownload`, `SetPriority`, `SetSpeedLimit`) and events
+  (`TaskAdded/Removed/Updated/Completed/Moved`, `Ticked`), with the threading
+  contract spelled out on the interface. The current driver,
+  `SimulatedDownloadKernel`, ticks on the handoff's 900ms cadence; a real
+  multi-segment HTTP/BT engine drops in behind the same interface.
+- **`NetTrans` (the app)** owns the presentation. `Services/TaskManager` is the
+  only consumer of that contract: it marshals kernel events onto the UI thread
+  via `DispatcherQueue`, mirrors the kernel queue into the
+  `ObservableCollection` the shell binds, and forwards user intent back down as
+  kernel commands. View models and views never touch the kernel directly.
+
 ## Project layout
 
 ```
+NetTrans.Kernel/            Download kernel -- plain net8.0, zero UI references
+  IDownloadKernel.cs        The boundary: commands + events
+  SimulatedDownloadKernel.cs Timer-driven simulation on the handoff's SEED
+  DownloadTask.cs           The kernel's task record (was Models/DownloadItem)
 NetTrans/
-  App.xaml(.cs)             Entry point; builds ShellHost
+  App.xaml(.cs)             Entry point; builds kernel → TaskManager → ShellHost
   Shell/
     ShellHost.cs            The three frames, docking, island follow, edge-hide, boss key
     SnapGuideWindow.cs      The 3px blue snap guide
@@ -49,9 +72,8 @@ NetTrans/
                             ConnectionList, SheetHost, PopoverControl, IslandControl
     Sheets/                 Add / Batch / Torrent / Sniff / Settings
   ViewModels/               ShellViewModel, DownloadItemViewModel
-  Models/                   DownloadItem, DownloadStatus, FileKind, TaskPriority,
-                            NewVersionInfo, LogEntry, AppSettings
-  Services/                 IDownloadEngine/StubDownloadEngine, DockManager, Easing,
+  Models/                   AppSettings
+  Services/                 TaskManager (the kernel↔UI seam), DockManager, Easing,
                             FormatHelpers, ThemeBrushes, clipboard + settings stores
   Resources/                Tokens.xaml (iOS tokens as ThemeDictionaries), Icons.xaml,
                             Styles/ (Text, Surfaces, Buttons, Inputs, Shadows)
@@ -102,9 +124,12 @@ the site:
 ## What's real vs. stubbed
 
 - UI is wired end to end (MVVM, CommunityToolkit.Mvvm) — no mock view models.
-- `StubDownloadEngine` is seeded with the handoff's own `SEED` array and ticks on
-  the same 900ms cadence and growth curve. Swap it for a real multi-segment HTTP
-  engine behind `IDownloadEngine`.
+- `SimulatedDownloadKernel` is seeded with the handoff's own `SEED` array and
+  ticks on the same 900ms cadence and growth curve, behind the
+  `IDownloadKernel` contract a real multi-segment HTTP/BT engine would
+  implement. The kernel library builds anywhere .NET 8 does
+  (`dotnet build NetTrans.Kernel`), so it can be developed and tested without a
+  Windows toolchain.
 - Settings persist **portably**, next to the executable
   (`NetTrans.settings.json`), falling back to `%LOCALAPPDATA%\NetTrans` when that
   directory is read-only — matching the 设置 sheet's promise of no registry writes.

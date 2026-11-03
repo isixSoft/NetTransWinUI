@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The download kernel. Deliberately a plain net8.0 library with zero UI
+       references: the csproj itself enforces the boundary, so nothing inside
+       this project can ever reach WinUI, DispatcherTimer or a view model.
+       Consumers talk to it only through IDownloadKernel. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NetTrans.Kernel</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>NetTrans.Kernel</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -1,6 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using NetTrans.Models;
+using NetTrans.Kernel;
 using NetTrans.Services;
 using NetTrans.ViewModels;
 

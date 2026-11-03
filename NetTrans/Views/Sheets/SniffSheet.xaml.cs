@@ -1,6 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using NetTrans.Models;
+using NetTrans.Kernel;
 using NetTrans.Services;
 using NetTrans.ViewModels;
 using NetTrans.Views.Controls;
@@ -85,7 +85,7 @@ public sealed partial class SniffSheet : UserControl
 
         foreach (var row in picked)
         {
-            _viewModel.Engine.Add(new NewDownloadRequest(
+            _viewModel.Manager.Add(new NewDownloadRequest(
                 PageBox.Text.Trim(),
                 _viewModel.Settings.DefaultSavePath,
                 "video",

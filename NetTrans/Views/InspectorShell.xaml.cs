@@ -5,7 +5,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using NetTrans.Interop;
-using NetTrans.Models;
+using NetTrans.Kernel;
 using NetTrans.Services;
 using NetTrans.ViewModels;
 using NetTrans.Views.Controls;
@@ -254,14 +254,14 @@ public sealed partial class InspectorShell : UserControl
     private void OnPriorityClick(object sender, RoutedEventArgs e)
     {
         if (_item is null || sender is not ToggleButton button || button.Tag is not string tag) return;
-        _item.Priority = Enum.Parse<TaskPriority>(tag);
+        _viewModel?.Manager.SetPriority(_item.Id, Enum.Parse<TaskPriority>(tag));
         RefreshOverview(_item);
     }
 
     private void OnLimitChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_item is null || LimitBox.SelectedItem is not string limit) return;
-        _item.SpeedLimit = limit;
+        _viewModel?.Manager.SetSpeedLimit(_item.Id, limit);
     }
 
     private void SelectLimit(string limit)

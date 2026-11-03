@@ -1,12 +1,16 @@
-namespace NetTrans.Models;
+namespace NetTrans.Kernel;
 
 /// <summary>
 /// Plain data record for one transfer -- the handoff's task object, field for
 /// field. Sizes and speeds are bytes and bytes/second here rather than the
-/// prototype's MB and KB/s; FormatHelpers renders them back to the same
-/// strings the design specifies.
+/// prototype's MB and KB/s; the UI's FormatHelpers renders them back to the
+/// same strings the design specifies.
+///
+/// Instances are owned and mutated only by the kernel; consumers read them
+/// through <see cref="IDownloadKernel"/>'s events and copy anything they need
+/// to keep.
 /// </summary>
-public sealed class DownloadItem
+public sealed class DownloadTask
 {
     public required int Id { get; init; }
     public required string Name { get; init; }

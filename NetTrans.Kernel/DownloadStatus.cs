@@ -1,4 +1,4 @@
-namespace NetTrans.Models;
+namespace NetTrans.Kernel;
 
 /// <summary>The handoff's `state` field: run | paused | done | error | queued.</summary>
 public enum DownloadStatus

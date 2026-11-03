@@ -40,4 +40,10 @@
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 
+  <!-- The download kernel: plain net8.0, no WinUI. UI reaches it only
+       through Services/TaskManager. -->
+  <ItemGroup>
+    <ProjectReference Include="..\NetTrans.Kernel\NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
 </Project>

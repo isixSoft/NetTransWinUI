@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using NetTrans.Kernel;
 using NetTrans.Services;
 using NetTrans.ViewModels;
 using NetTrans.Shell;
@@ -20,11 +21,15 @@ public partial class App : Application
     {
         ThemeBrushes.SetTheme(Current.RequestedTheme);
 
+        // The download kernel lives in its own UI-free assembly; TaskManager is
+        // the only seam between it and the observable UI tree.
+        IDownloadKernel kernel = new SimulatedDownloadKernel();
+        var taskManager = new TaskManager(kernel, DispatcherQueue.GetForCurrentThread());
+
         ISettingsStore settingsStore = new JsonSettingsStore();
-        IDownloadEngine downloadEngine = new StubDownloadEngine();
         IClipboardWatcher clipboardWatcher = new ClipboardWatcher();
 
-        var shellViewModel = new ShellViewModel(downloadEngine, clipboardWatcher, settingsStore);
+        var shellViewModel = new ShellViewModel(taskManager, clipboardWatcher, settingsStore);
 
         _shell = new ShellHost(shellViewModel);
         _shell.Start();

@@ -1,4 +1,4 @@
-namespace NetTrans.Models;
+namespace NetTrans.Kernel;
 
 /// <summary>One row of the inspector's 日志 tab: timestamp + event text.</summary>
 /// <param name="Time">Wall-clock stamp as shown ("09:41").</param>

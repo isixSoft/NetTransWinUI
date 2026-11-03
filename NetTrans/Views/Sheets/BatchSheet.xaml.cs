@@ -1,6 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using NetTrans.Models;
+using NetTrans.Kernel;
 using NetTrans.Services;
 using NetTrans.ViewModels;
 using NetTrans.Views.Controls;
@@ -89,7 +89,7 @@ public sealed partial class BatchSheet : UserControl
         string page = PageBox.Text.TrimEnd('/');
         foreach (var row in picked)
         {
-            _viewModel.Engine.Add(new NewDownloadRequest(
+            _viewModel.Manager.Add(new NewDownloadRequest(
                 $"{page}/{row.Label}",
                 _viewModel.Settings.DefaultSavePath,
                 "doc",
