@@ -176,6 +176,11 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         Priority = Model.Priority;
         SpeedLimit = Model.SpeedLimit;
 
+        // the real kernel refines these after its probe
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Host));
+        OnPropertyChanged(nameof(Size));
+
         OnPropertyChanged(nameof(Blocks));
         OnPropertyChanged(nameof(ConnectionSpeeds));
         OnPropertyChanged(nameof(SpeedHistory));

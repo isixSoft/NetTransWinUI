@@ -1,0 +1,642 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using NetTrans.Kernel.Net;
+using NetTrans.Kernel.Protocol;
+
+namespace NetTrans.Kernel.Transfer;
+
+public enum TransferOutcomeKind
+{
+    Completed,
+    Paused,
+    Failed,
+}
+
+public sealed record TransferOutcome(TransferOutcomeKind Kind, string? Error);
+
+/// <summary>
+/// One transfer job: a plan from a driver plus everything needed to execute it.
+/// The kernel creates a session per start/resume and cancels the token to pause;
+/// resume state round-trips through <see cref="TransferCheckpoint"/>.
+/// </summary>
+public sealed class TransferRequest
+{
+    public required TransferPlan Plan { get; init; }
+    public required string SavePath { get; init; }
+    public required HttpClient Http { get; init; }
+    public required SpeedLimiter Limiter { get; init; }
+
+    /// <summary>ETag from the fresh probe — identity input for the resume check.</summary>
+    public string? ETag { get; init; }
+
+    public int Connections { get; init; } = 8;
+    public int RetryCount { get; init; } = 3;
+
+    /// <summary>Per-request headers (cookies / referer), already merged with defaults by the kernel.</summary>
+    public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>Loaded checkpoint, already read from disk; validated here against the fresh probe.</summary>
+    public TransferCheckpoint? Checkpoint { get; init; }
+
+    /// <summary>Periodic + on-pause persistence sink (the kernel writes the file).</summary>
+    public Action<TransferCheckpoint>? CheckpointChanged { get; init; }
+
+    public LogSink? Log { get; init; }
+}
+
+/// <summary>
+/// Moves the bytes for one <see cref="TransferPlan"/>: byte-range segmenting
+/// with a shared work queue, direct-at-offset writes, per-connection speed
+/// readouts, mirror failover, a token-bucket limiter and periodic checkpoints.
+/// The session is single-use: construct, <see cref="RunAsync"/>, discard.
+/// </summary>
+public sealed class TransferSession
+{
+    private const int ChunkSize = 64 * 1024;
+    private const long MaxSegmentBuffer = 256 * 1024 * 1024;
+
+    private const int ModeIdle = 0;
+    private const int ModeRanges = 1;
+    private const int ModeFiles = 2;
+
+    private readonly TransferRequest _request;
+    private readonly object _speedGate = new();
+
+    private long _done;
+    private long _total = -1;
+    private int _mode = ModeIdle;
+    private int _liveWorkers;
+    private int _nextPiece;
+    private int _nextSegment;
+
+    // ranges mode
+    private RangeSegment[] _pieces = [];
+
+    // segment-files mode
+    private string[] _files = [];
+    private long _writeOffset;
+    private int _committedCount;
+    private int _bufferedCount;
+    private string? _fingerprint;
+
+    // per-connection speed slots, written by workers, read by the kernel's tick
+    private double[] _speeds = [];
+    private long[] _windowBytes = [];
+    private long[] _windowStart = [];
+
+    public TransferSession(TransferRequest request) => _request = request;
+
+    /// <summary>Bytes received so far, across every connection.</summary>
+    public long DoneBytes => Interlocked.Read(ref _done);
+
+    /// <summary>Resource size, or -1 when unknown (may fill in once a response arrives).</summary>
+    public long TotalBytes => Interlocked.Read(ref _total);
+
+    /// <summary>Live connection count, as the inspector shows it.</summary>
+    public int LiveConnections => Interlocked.CompareExchange(ref _liveWorkers, 0, 0);
+
+    /// <summary>Speeds of connections with traffic, bytes/s — one entry per live connection.</summary>
+    public double[] ActiveSpeeds()
+    {
+        lock (_speedGate)
+        {
+            return _speeds.Where(s => s > 0).ToArray();
+        }
+    }
+
+    public async Task<TransferOutcome> RunAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            return _request.Plan switch
+            {
+                TransferPlan.ByteRanges ranges => await RunRangesAsync(ranges, cancellation),
+                TransferPlan.FtpFile ftp => await RunFtpAsync(ftp, cancellation),
+                TransferPlan.SegmentFiles files => await RunSegmentFilesAsync(files, cancellation),
+                TransferPlan.ExternalEngine engine => new TransferOutcome(TransferOutcomeKind.Failed,
+                    $"需要外部引擎（{engine.Engine}）—— 引擎插槽未接入：{engine.Detail}"),
+                TransferPlan.Unsupported unsupported => new TransferOutcome(TransferOutcomeKind.Failed, unsupported.Reason),
+                _ => new TransferOutcome(TransferOutcomeKind.Failed, "未知传输计划"),
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            return new TransferOutcome(TransferOutcomeKind.Paused, null);
+        }
+    }
+
+    // ── byte-range mode (HTTP) ────────────────────────────────────────────
+    private async Task<TransferOutcome> RunRangesAsync(TransferPlan.ByteRanges plan, CancellationToken cancellation)
+    {
+        _mode = ModeRanges;
+        var table = PrepareRangeTable(plan);
+
+        // a resumed table needs its backing file at the right length
+        if (table.Restored && !File.Exists(_request.SavePath))
+        {
+            Log("本地文件缺失，断点失效，重新开始");
+            table = FreshTable(plan);
+        }
+        else if (table.Restored && plan.Size > 0 && new FileInfo(_request.SavePath).Length != plan.Size)
+        {
+            Log("本地文件与断点不符，重新开始");
+            table = FreshTable(plan);
+        }
+
+        _pieces = table.Segments;
+        Interlocked.Exchange(ref _total, plan.Size);
+        var sources = new MirrorSourceSet(plan.Url, plan.Mirrors);
+
+        using var writer = new ChunkedFileWriter(_request.SavePath, plan.Size > 0 ? plan.Size : null);
+        if (plan.Size <= 0) Log("服务器未提供文件大小，无法断点续传");
+        if (plan.Size > 0 && !plan.AcceptRanges) Log("服务器不支持分段下载，使用单连接");
+        if (plan.Mirrors.Count > 0) Log($"已启用 {plan.Mirrors.Count} 个镜像源");
+
+        using var checkpointTimer = new Timer(
+            _ => SaveRangeCheckpoint(table), null,
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
+        return await RunWorkersAsync(
+            writer, cancellation,
+            onPaused: () => SaveRangeCheckpoint(table),
+            body: (slot, token) => RangeWorkerAsync(slot, writer, sources, token));
+    }
+
+    /// <summary>Restore the checkpoint when it matches the fresh probe; split fresh otherwise.</summary>
+    private SegmentTable PrepareRangeTable(TransferPlan.ByteRanges plan)
+    {
+        var checkpoint = _request.Checkpoint;
+        if (checkpoint is not { Kind: "ranges" }) return FreshTable(plan);
+
+        bool sizeMatch = plan.Size > 0 && checkpoint.Size == plan.Size;
+        bool sizeUnknown = plan.Size <= 0 && checkpoint.Size <= 0;
+        bool etagMatch = checkpoint.ETag is null || _request.ETag is null || checkpoint.ETag == _request.ETag;
+
+        if ((!sizeMatch && !sizeUnknown) || !etagMatch)
+        {
+            Log("资源已变化，断点失效，重新开始");
+            return FreshTable(plan);
+        }
+
+        var restored = SegmentTable.Restore(checkpoint);
+        if (restored is null) return FreshTable(plan);
+
+        restored.Restored = true;
+        Log($"已从断点恢复，剩余 {FormatSize(restored.Segments.Sum(s => s.Remaining))}");
+        return restored;
+    }
+
+    private SegmentTable FreshTable(TransferPlan.ByteRanges plan) =>
+        SegmentTable.Split(plan.Url, plan.Size, _request.ETag,
+            plan.AcceptRanges && plan.Size > 0 ? _request.Connections : 1);
+
+    // ── segment-files mode (HLS / DASH) ───────────────────────────────────
+    private async Task<TransferOutcome> RunSegmentFilesAsync(TransferPlan.SegmentFiles plan, CancellationToken cancellation)
+    {
+        _mode = ModeFiles;
+        _files = plan.Segments.ToArray();
+        _fingerprint = Fingerprint(_files);
+        Interlocked.Exchange(ref _total, plan.TotalSize ?? -1);
+
+        var committed = new List<long>();
+        if (_request.Checkpoint is { Kind: "segments" } checkpoint && checkpoint.Fingerprint == _fingerprint)
+        {
+            committed.AddRange(checkpoint.Committed);
+            Log($"已从断点恢复，已完成 {committed.Count}/{_files.Length} 个分段");
+        }
+        else if (_request.Checkpoint is { Kind: "segments" })
+        {
+            Log("播放列表已变化，断点失效，重新开始");
+        }
+
+        _committedCount = committed.Count;
+        _writeOffset = committed.Sum();
+        _nextSegment = committed.Count;
+
+        using var writer = new ChunkedFileWriter(_request.SavePath, plan.TotalSize);
+
+        var buffers = new Dictionary<int, byte[]>();
+        var buffersGate = new object();
+
+        void SaveCheckpoint()
+        {
+            if (_request.CheckpointChanged is null) return;
+            long[] snapshot;
+            lock (buffersGate) snapshot = committed.ToArray();
+            if (snapshot.Length == 0) return;
+            _request.CheckpointChanged.Invoke(new TransferCheckpoint
+            {
+                Kind = "segments",
+                Url = _files.FirstOrDefault() ?? "",
+                ETag = _request.ETag,
+                Committed = snapshot,
+                Fingerprint = _fingerprint,
+            });
+        }
+
+        using var checkpointTimer = new Timer(
+            _ => SaveCheckpoint(), null,
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
+        return await RunWorkersAsync(
+            writer, cancellation,
+            onPaused: SaveCheckpoint,
+            body: (slot, token) => SegmentWorkerAsync(slot, token, writer, buffers, buffersGate, committed));
+    }
+
+    private async Task SegmentWorkerAsync(
+        int slot, CancellationToken cancellation, ChunkedFileWriter writer,
+        Dictionary<int, byte[]> buffers, object buffersGate, List<long> committed)
+    {
+        while (!cancellation.IsCancellationRequested)
+        {
+            int index = Interlocked.Increment(ref _nextSegment) - 1;
+            if (index >= _files.Length) return;
+
+            var bytes = await FetchSegmentAsync(_files[index], slot, cancellation);
+            Interlocked.Add(ref _done, bytes.LongLength);
+            lock (buffersGate)
+            {
+                buffers[index] = bytes;
+                Interlocked.Increment(ref _bufferedCount);
+            }
+
+            // commit as many in-order segments as are now ready
+            lock (buffersGate)
+            {
+                while (buffers.TryGetValue(_committedCount, out var ready))
+                {
+                    buffers.Remove(_committedCount);
+                    Interlocked.Decrement(ref _bufferedCount);
+                    writer.Write(_writeOffset, ready, ready.Length);
+                    _writeOffset += ready.Length;
+                    committed.Add(ready.LongLength);
+                    _committedCount++;
+                }
+            }
+        }
+    }
+
+    private async Task<byte[]> FetchSegmentAsync(string url, int slot, CancellationToken cancellation)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[ChunkSize];
+
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                buffer.SetLength(0);
+                using var message = BuildMessage(HttpMethod.Get, url);
+                using var response = await _request.Http.SendAsync(
+                    message, HttpCompletionOption.ResponseHeadersRead, cancellation);
+                response.EnsureSuccessStatusCode();
+                using var stream = await response.Content.ReadAsStreamAsync(cancellation);
+
+                int n;
+                while ((n = await stream.ReadAsync(chunk, cancellation)) > 0)
+                {
+                    if (buffer.Length + n > MaxSegmentBuffer) throw new IOException("HLS/DASH 分段超出内存缓冲限制");
+                    await _request.Limiter.WaitAsync(n, cancellation);
+                    buffer.Write(chunk, 0, n);
+                    SpeedTick(slot, n);
+                }
+
+                return buffer.ToArray();
+            }
+            catch (Exception error) when (error is not OperationCanceledException && attempt < _request.RetryCount)
+            {
+                Log($"分段拉取失败，重试（{Brief(error.Message)}）");
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(1 + attempt, 5)), cancellation);
+            }
+        }
+    }
+
+    // ── FTP mode ──────────────────────────────────────────────────────────
+    private async Task<TransferOutcome> RunFtpAsync(TransferPlan.FtpFile plan, CancellationToken cancellation)
+    {
+        _mode = ModeRanges;
+        Interlocked.Exchange(ref _total, plan.Size);
+        _pieces = SegmentTable.Split(plan.Url, plan.Size, null, 1).Segments;
+        InitSpeedSlots(1);
+
+        using var writer = new ChunkedFileWriter(_request.SavePath, plan.Size > 0 ? plan.Size : null);
+        Log(plan.Url.StartsWith("ftps", StringComparison.OrdinalIgnoreCase)
+            ? "FTPS · 单连接流式传输（FTP REST 跨服务器不可靠，未启用断点续传）"
+            : "FTP · 单连接流式传输（FTP REST 跨服务器不可靠，未启用断点续传）");
+
+        for (int attempt = 0; ; attempt++)
+        {
+            long written = 0;
+            try
+            {
+#pragma warning disable SYSLIB0014
+                var request = (FtpWebRequest)WebRequest.Create(FtpRequestUri(plan.Url));
+                request.Method = WebRequestMethods.Ftp.DownloadFile;
+                request.UseBinary = true;
+                request.UsePassive = true;
+                request.EnableSsl = plan.Url.StartsWith("ftps", StringComparison.OrdinalIgnoreCase);
+                request.Timeout = 15000;
+                using var response = (FtpWebResponse)request.GetResponse();
+#pragma warning restore SYSLIB0014
+                using var source = response.GetResponseStream()!;
+                if (response.ContentLength > 0 && Interlocked.Read(ref _total) < 0)
+                    Interlocked.Exchange(ref _total, response.ContentLength);
+
+                var buffer = new byte[ChunkSize];
+                int n;
+                while ((n = await source.ReadAsync(buffer, cancellation)) > 0)
+                {
+                    await _request.Limiter.WaitAsync(n, cancellation);
+                    writer.Write(written, buffer, n);
+                    written += n;
+                    Interlocked.Exchange(ref _done, written);
+                    SpeedTick(0, n);
+                }
+
+                if (Interlocked.Read(ref _total) > 0 && written < Interlocked.Read(ref _total))
+                    throw new IOException("FTP 连接在完成前中断");
+
+                writer.Flush();
+                return new TransferOutcome(TransferOutcomeKind.Completed, null);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error) when (attempt < _request.RetryCount)
+            {
+                Log($"FTP 传输失败，重试（{Brief(error.Message)}）");
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(1 + attempt, 5)), cancellation);
+            }
+            catch (Exception error)
+            {
+                return new TransferOutcome(TransferOutcomeKind.Failed, error.Message);
+            }
+        }
+    }
+
+    private static Uri FtpRequestUri(string url)
+    {
+        var uri = new Uri(url);
+        if (uri.Scheme != "ftps") return uri;
+
+        // FtpWebRequest registers only the ftp:// scheme; ftps rides on it with EnableSsl
+        var builder = new UriBuilder(uri) { Scheme = "ftp" };
+        return builder.Uri;
+    }
+
+    // ── the shared worker harness ─────────────────────────────────────────
+    private async Task<TransferOutcome> RunWorkersAsync(
+        ChunkedFileWriter writer,
+        CancellationToken cancellation,
+        Action? onPaused,
+        Func<int, CancellationToken, Task> body)
+    {
+        int workers = _mode == ModeFiles
+            ? Math.Min(_request.Connections, Math.Max(1, _files.Length - _committedCount))
+            : Math.Min(_request.Connections, _pieces.Length);
+        workers = Math.Max(1, workers);
+        InitSpeedSlots(workers);
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var tasks = Enumerable.Range(0, workers)
+            .Select(slot => Task.Run(
+                async () =>
+                {
+                    Interlocked.Increment(ref _liveWorkers);
+                    try
+                    {
+                        await body(slot, linked.Token);
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _liveWorkers);
+                        SetSpeed(slot, 0);
+                    }
+                },
+                CancellationToken.None))
+            .ToArray();
+
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (Exception error)
+        {
+            if (cancellation.IsCancellationRequested)
+            {
+                onPaused?.Invoke();
+                Log("已暂停，断点已保存");
+                return new TransferOutcome(TransferOutcomeKind.Paused, null);
+            }
+
+            linked.Cancel();
+            try { await Task.WhenAll(tasks); } catch { /* secondary failures are noise */ }
+            onPaused?.Invoke();
+
+            var failure = error is AggregateException aggregate
+                ? aggregate.InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException) ?? error
+                : error;
+            return new TransferOutcome(TransferOutcomeKind.Failed, Brief(failure.Message));
+        }
+
+        if (_mode == ModeRanges && _pieces.Any(p => !p.IsComplete))
+            return new TransferOutcome(TransferOutcomeKind.Failed, "传输提前结束");
+
+        if (_mode == ModeFiles && _committedCount < _files.Length)
+            return new TransferOutcome(TransferOutcomeKind.Failed, "分段传输提前结束");
+
+        writer.Flush();
+        return new TransferOutcome(TransferOutcomeKind.Completed, null);
+    }
+
+    private async Task RangeWorkerAsync(int slot, ChunkedFileWriter writer, MirrorSourceSet? sources, CancellationToken cancellation)
+    {
+        var pieces = _pieces;
+        var buffer = new byte[ChunkSize];
+
+        while (!cancellation.IsCancellationRequested)
+        {
+            int index = Interlocked.Increment(ref _nextPiece) - 1;
+            if (index >= pieces.Length) return;
+
+            var piece = pieces[index];
+            bool lenient = pieces.Length == 1; // single stream: a Range-ignoring server just restarts us at 0
+
+            for (int attempt = 0; ; attempt++)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (piece.IsComplete) break;
+                var source = sources?.Next() ?? "";
+
+                try
+                {
+                    using var message = BuildMessage(HttpMethod.Get, source);
+                    if (piece.End != long.MaxValue)
+                    {
+                        if (piece.Start + piece.Done > 0)
+                            message.Headers.Range = new RangeHeaderValue(piece.Start + piece.Done, piece.End - 1);
+                    }
+                    else if (piece.Done > 0)
+                    {
+                        message.Headers.Range = RangeHeaderValue.Parse($"bytes={piece.Start + piece.Done}-");
+                    }
+
+                    using var response = await _request.Http.SendAsync(
+                        message, HttpCompletionOption.ResponseHeadersRead, cancellation);
+
+                    bool ignoredRange = (int)response.StatusCode == 200 && piece.Start + piece.Done > 0;
+                    if (ignoredRange && !lenient) throw new IOException("服务器不支持断点续传（Range 被忽略）");
+                    if (ignoredRange)
+                    {
+                        Log("服务器忽略了续传请求，从头开始");
+                        Interlocked.Add(ref _done, -piece.Done);
+                        piece.Done = 0;
+                    }
+
+                    response.EnsureSuccessStatusCode();
+                    using var stream = await response.Content.ReadAsStreamAsync(cancellation);
+
+                    if (piece.End == long.MaxValue && Interlocked.Read(ref _total) < 0 &&
+                        response.Content.Headers.ContentLength is { } length)
+                    {
+                        Interlocked.Exchange(ref _total, length);
+                    }
+
+                    int n;
+                    while ((n = await stream.ReadAsync(buffer, cancellation)) > 0)
+                    {
+                        await _request.Limiter.WaitAsync(n, cancellation);
+                        writer.Write(piece.Start + piece.Done, buffer, n);
+                        piece.Done += n;
+                        Interlocked.Add(ref _done, n);
+                        SpeedTick(slot, n);
+                    }
+
+                    if (piece.IsComplete) break;
+                    throw new IOException("连接在完成前中断");
+                }
+                catch (Exception error) when (error is not OperationCanceledException && attempt < _request.RetryCount)
+                {
+                    sources?.ReportFailure(source);
+                    Log($"连接中断，第 {attempt + 1} 次重试（{Brief(error.Message)}）");
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(1 + attempt, 5)), cancellation);
+                }
+            }
+        }
+    }
+
+    // ── checkpoints ───────────────────────────────────────────────────────
+    private void SaveRangeCheckpoint(SegmentTable table)
+    {
+        if (_request.CheckpointChanged is null || table.Size <= 0) return;
+        if (table.DoneBytes == 0 && !table.Restored) return;
+        _request.CheckpointChanged.Invoke(table.ToCheckpoint());
+    }
+
+    /// <summary>Stable identity of a playlist's segment order, so a changed manifest invalidates resume state.</summary>
+    private static string Fingerprint(string[] files)
+    {
+        var bytes = Encoding.UTF8.GetBytes(string.Join("\n", files));
+        return Convert.ToHexString(SHA256.HashData(bytes))[..16];
+    }
+
+    // ── blocks / speeds / helpers ─────────────────────────────────────────
+    /// <summary>The 96-cell 分块 grid: 1 = done, 2 = in flight, 0 = pending.</summary>
+    public int[] ComputeBlocks(int cells)
+    {
+        var blocks = new int[cells];
+
+        if (_mode == ModeRanges)
+        {
+            long size = Interlocked.CompareExchange(ref _total, 0, 0);
+            if (size <= 0)
+            {
+                long done = Interlocked.Read(ref _done);
+                int filled = (int)Math.Min(cells - 1, done / (4 * 1024 * 1024));
+                for (int i = 0; i < filled; i++) blocks[i] = 1;
+                if (done > 0 && filled < cells) blocks[filled] = 2;
+                return blocks;
+            }
+
+            foreach (var piece in _pieces)
+            {
+                if (piece.Done <= 0) continue;
+                long doneEnd = Math.Min(piece.Start + piece.Done, piece.End);
+                int first = (int)(piece.Start * cells / size);
+                int last = (int)Math.Min(cells - 1, (doneEnd - 1) * cells / size);
+                for (int c = first; c <= last; c++)
+                {
+                    long cellStart = (long)c * size / cells;
+                    long cellEnd = (long)(c + 1) * size / cells;
+                    blocks[c] = Math.Max(blocks[c], cellStart >= piece.Start && cellEnd <= doneEnd ? 1 : 2);
+                }
+            }
+        }
+        else if (_mode == ModeFiles && _files.Length > 0)
+        {
+            int fullCells = (int)((long)_committedCount * cells / _files.Length);
+            for (int i = 0; i < fullCells; i++) blocks[i] = 1;
+            if (_committedCount < _files.Length && _liveWorkers > 0)
+                blocks[Math.Min(fullCells, cells - 1)] = 2;
+        }
+
+        return blocks;
+    }
+
+    private void InitSpeedSlots(int workers)
+    {
+        lock (_speedGate)
+        {
+            _speeds = new double[workers];
+            _windowBytes = new long[workers];
+            _windowStart = new long[workers];
+            for (int i = 0; i < workers; i++) _windowStart[i] = Stopwatch.GetTimestamp();
+        }
+    }
+
+    private void SpeedTick(int slot, int bytes)
+    {
+        var now = Stopwatch.GetTimestamp();
+        _windowBytes[slot] += bytes;
+        double elapsed = (now - _windowStart[slot]) / (double)Stopwatch.Frequency;
+        if (elapsed >= 0.5)
+        {
+            SetSpeed(slot, _windowBytes[slot] / elapsed);
+            _windowBytes[slot] = 0;
+            _windowStart[slot] = now;
+        }
+    }
+
+    private void SetSpeed(int slot, double value)
+    {
+        lock (_speedGate)
+        {
+            if (slot < _speeds.Length) _speeds[slot] = value;
+        }
+    }
+
+    private HttpRequestMessage BuildMessage(HttpMethod method, string url)
+    {
+        var message = new HttpRequestMessage(method, url);
+        foreach (var (name, value) in _request.Headers)
+            message.Headers.TryAddWithoutValidation(name, value);
+        return message;
+    }
+
+    private void Log(string message, bool isError = false) => _request.Log?.Invoke(message, isError);
+
+    private static string Brief(string message) => message.Length <= 60 ? message : message[..57] + "…";
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):0.0#} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):0.0#} MB",
+        >= 1L << 10 => $"{bytes / (double)(1L << 10):0} KB",
+        _ => $"{bytes} B",
+    };
+}

@@ -40,14 +40,93 @@ The network side is split in two, and the solution mirrors it:
   `IDownloadKernel`: commands (`Add`, `Toggle`, `Remove`, `ToggleAll`,
   `MoveToFront/Back`, `Redownload`, `SetPriority`, `SetSpeedLimit`) and events
   (`TaskAdded/Removed/Updated/Completed/Moved`, `Ticked`), with the threading
-  contract spelled out on the interface. The current driver,
-  `SimulatedDownloadKernel`, ticks on the handoff's 900ms cadence; a real
-  multi-segment HTTP/BT engine drops in behind the same interface.
+  contract spelled out on the interface. Two implementations live behind it:
+  `SimulatedDownloadKernel` (the handoff's timer-driven demo) and
+  `RealDownloadKernel` — the multi-protocol transfer engine described below.
+  `App.xaml.cs` picks one with a single `UseRealKernel` switch; nothing else in
+  the app changes.
 - **`NetTrans` (the app)** owns the presentation. `Services/TaskManager` is the
   only consumer of that contract: it marshals kernel events onto the UI thread
   via `DispatcherQueue`, mirrors the kernel queue into the
   `ObservableCollection` the shell binds, and forwards user intent back down as
   kernel commands. View models and views never touch the kernel directly.
+
+## Network protocol architecture (Ghost Downloader alignment)
+
+The real kernel's protocol surface was dimensioned against
+[Ghost Downloader](https://github.com/XiaoYouChR/Ghost-Downloader-3):
+everything its network stack supports, NetTrans supports; where Ghost reaches
+for an external engine, NetTrans models that as an explicit slot instead of
+pretending.
+
+```
+NetTrans.Kernel/
+  KernelOptions.cs            UA / connections / concurrency / retry / speed /
+                              proxy / headers / mirror resolver / TLS handler factory
+  RealDownloadKernel.cs       priority scheduling, MaxSimultaneous slots, tick,
+                              SHA-256 verify, checkpoint lifecycle
+  Protocol/
+    DownloadProtocol.cs       Http | Ftp | BitTorrent | Hls | Dash | Ed2k
+    ProtocolDetector.cs       URL scheme + extension → protocol
+    ProtocolDriverRegistry.cs detect → probe → one-hop handoff (body sniff)
+    IProtocolDriver.cs        ResourceProbe + TransferPlan contract
+    Drivers/HttpDriver.cs     HEAD→GET+Range:0-0 probe, Content-Disposition naming,
+                              mirror validation, m3u8/mpd body sniff
+    Drivers/FtpDriver.cs      FTPS (EnableSsl), size probe, proxy
+    Drivers/HlsDriver.cs      master→highest-bandwidth variant, EXT-X-MAP,
+                              live/encrypted → honest Unsupported
+    Drivers/DashDriver.cs     SegmentTemplate (duration / SegmentTimeline),
+                              SegmentList, SegmentBase → range fallback
+    Drivers/BitTorrentDriver.cs  bencode + magnet metadata
+    Drivers/Ed2kDriver.cs     ed2k:// link metadata
+    Bencode.cs                minimal bencode decoder
+  Transfer/
+    SegmentTable.cs           over-split (4× connections, cap 64) work queue
+    ChunkedFileWriter.cs      offset writes into a preallocated file — no merge pass
+    TransferCheckpoint.cs     resumable state, stored next to the target file
+    TransferSession.cs        one run: workers, retry, mirror failover, pause/resume
+    SpeedLimiter.cs           token bucket; global = min(global, per-task), live retune
+    MirrorSourceSet.cs        round-robin + failure demotion
+  Net/Socks5Connector.cs      RFC1928 CONNECT for socks5:// proxies
+```
+
+A probe resolves any URL into a `TransferPlan` — `ByteRanges` (multi-segment,
+mirror-backed), `FtpFile`, `SegmentFiles` (HLS/DASH), `ExternalEngine`
+(BT/eD2k data plane) or `Unsupported` (with the reason, in Chinese, shown to
+the user). Resume state lives in a `.nettrans.json` checkpoint beside the
+target file: range tables for HTTP, committed-prefix counters plus a playlist
+fingerprint for HLS/DASH, validated against size/ETag before a resume is
+trusted.
+
+### Capability matrix vs. Ghost Downloader
+
+| Capability | Ghost Downloader | NetTrans |
+| --- | --- | --- |
+| HTTP/HTTPS multi-segment + Range resume | Yes | Yes |
+| FTP / FTPS | Yes (aioftp) | Yes (`FtpWebRequest`, EnableSsl) |
+| HLS / m3u8 (VOD) | Yes (N_m3u8DL-RE) | Yes (concatenated TS, no remux) |
+| MPEG-DASH | Yes (N_m3u8DL-RE) | Yes (template/list/base) |
+| Live HLS / encrypted HLS | via N_m3u8DL-RE | Honest `Unsupported` |
+| Magnet / .torrent metadata | Yes (libtorrent) | Yes (bencode + magnet parse) |
+| BitTorrent data plane | Yes (libtorrent ≥ 2.0.13) | External-engine slot — clear error, no pretense |
+| eD2k | Yes (Kelpie) | Link metadata + external-engine slot |
+| yt-dlp (YouTube, Bilibili…) | Yes | Not built in — same slot can host it |
+| aria2 RPC control | Yes | Not implemented |
+| Browser-extension sniffing | Yes | Not implemented (app ships a sniff sheet) |
+| HTTP(S) / SOCKS5 proxy | Yes | Yes (`WebProxy` / `Socks5Connector`) |
+| Browser TLS fingerprint | Yes (wreq) | Slot only (`HttpHandlerFactory`); .NET SslStream can't imitate a browser handshake |
+| Custom UA / headers / cookies | Yes | Yes (`KernelOptions`) |
+| Mirror acceleration (GitHub / HuggingFace) | Yes (curated mirror lists) | Generalized: any `MirrorResolver`, validated by size + ETag |
+| Live edits of URL/headers/proxy mid-download | Yes | Yes — checkpoint survives, resume keeps bytes |
+| Global + per-task speed limit, live retune | Yes | Yes (token bucket) |
+| Priority queue + max-simultaneous slots | Yes | Yes |
+| SHA-256 verification | No | Yes |
+| Category folders, newer-version probe, clipboard watch, scheduled downloads | No / partial | Yes |
+
+The two rows where NetTrans intentionally says "no" (BT/eD2k data plane) are
+the same boundary Ghost draws with native engines — the difference is that
+NetTrans surfaces it as a typed plan (`ExternalEngine`) instead of a silent
+fallback.
 
 ## Project layout
 
@@ -55,6 +134,7 @@ The network side is split in two, and the solution mirrors it:
 NetTrans.Kernel/            Download kernel -- plain net8.0, zero UI references
   IDownloadKernel.cs        The boundary: commands + events
   SimulatedDownloadKernel.cs Timer-driven simulation on the handoff's SEED
+  RealDownloadKernel.cs     The real engine -- see "Network protocol architecture" above
   DownloadTask.cs           The kernel's task record (was Models/DownloadItem)
 NetTrans/
   App.xaml(.cs)             Entry point; builds kernel → TaskManager → ShellHost
@@ -125,11 +205,14 @@ the site:
 
 - UI is wired end to end (MVVM, CommunityToolkit.Mvvm) — no mock view models.
 - `SimulatedDownloadKernel` is seeded with the handoff's own `SEED` array and
-  ticks on the same 900ms cadence and growth curve, behind the
-  `IDownloadKernel` contract a real multi-segment HTTP/BT engine would
-  implement. The kernel library builds anywhere .NET 8 does
-  (`dotnet build NetTrans.Kernel`), so it can be developed and tested without a
-  Windows toolchain.
+  ticks on the same 900ms cadence and growth curve — it stays the default so
+  the UI demo runs anywhere. `RealDownloadKernel` (multi-segment HTTP, FTP,
+  HLS, DASH, BT/eD2k metadata, resume, mirrors, rate limiting) sits behind the
+  same `IDownloadKernel` contract; flip `UseRealKernel` in `App.xaml.cs` to
+  run it. Both kernels are exercised by the same harness contract
+  (`dotnet build NetTrans.Kernel` builds anywhere .NET 8 does; the real
+  kernel's transfer paths are covered by a local HTTP Range/HLS/DASH test
+  suite — 49 checks, all passing on Linux).
 - Settings persist **portably**, next to the executable
   (`NetTrans.settings.json`), falling back to `%LOCALAPPDATA%\NetTrans` when that
   directory is read-only — matching the 设置 sheet's promise of no registry writes.

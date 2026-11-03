@@ -13,10 +13,14 @@ namespace NetTrans.Kernel;
 public sealed class DownloadTask
 {
     public required int Id { get; init; }
-    public required string Name { get; init; }
-    public required string Host { get; init; }
+
+    /// <summary>Mutable: the real kernel refines it once the probe names the resource.</summary>
+    public required string Name { get; set; }
+    public required string Host { get; set; }
     public required FileKind Kind { get; init; }
-    public required long Size { get; init; }
+
+    /// <summary>Mutable: filled in by the real kernel's probe (0 until then).</summary>
+    public required long Size { get; set; }
 
     /// <summary>soft | video | doc | music | bt -- the category chips.</summary>
     public required string Category { get; init; }
