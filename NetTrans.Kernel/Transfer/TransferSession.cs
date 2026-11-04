@@ -210,6 +210,10 @@ public sealed class TransferSession
 
         if (_request.EngineRunner is { } runner)
         {
+            // 引擎产物目录必须存在：命令路径（见 RunExternalEngineCommandAsync）
+            // 会建目录，runner 插槽保持同一约定，不把建目录的义务甩给引擎。
+            var outputDir = Path.GetDirectoryName(_request.SavePath);
+            if (outputDir is { Length: > 0 }) Directory.CreateDirectory(outputDir);
             try
             {
                 bool produced = await runner(seededPlan, _request.SavePath, cancellation);
