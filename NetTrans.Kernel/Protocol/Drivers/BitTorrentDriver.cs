@@ -21,11 +21,7 @@ public sealed class BitTorrentDriver : IProtocolDriver
             if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                using var message = new HttpRequestMessage(HttpMethod.Get, url);
-                DriverHelpers.AddHeaders(message, context.Headers);
-                using var response = await context.Http.SendAsync(message, cancellation);
-                response.EnsureSuccessStatusCode();
-                bytes = await response.Content.ReadAsByteArrayAsync(cancellation);
+                bytes = await DriverHelpers.GetBytesAsync(url, context, cancellation);
             }
             else
             {

@@ -76,4 +76,30 @@ public static class DriverHelpers
         foreach (var (name, value) in headers)
             message.Headers.TryAddWithoutValidation(name, value);
     }
+
+    /// <summary>GET a URL and read the body as text (playlists, manifests).</summary>
+    public static async Task<string> GetTextAsync(
+        string url, DriverContext context, CancellationToken cancellation)
+    {
+        using var response = await GetAsync(url, context, cancellation);
+        return await response.Content.ReadAsStringAsync(cancellation);
+    }
+
+    /// <summary>GET a URL and read the body as bytes (small binary metadata such as .torrent).</summary>
+    public static async Task<byte[]> GetBytesAsync(
+        string url, DriverContext context, CancellationToken cancellation)
+    {
+        using var response = await GetAsync(url, context, cancellation);
+        return await response.Content.ReadAsByteArrayAsync(cancellation);
+    }
+
+    private static async Task<HttpResponseMessage> GetAsync(
+        string url, DriverContext context, CancellationToken cancellation)
+    {
+        var message = new HttpRequestMessage(HttpMethod.Get, url);
+        AddHeaders(message, context.Headers);
+        var response = await context.Http.SendAsync(message, cancellation);
+        response.EnsureSuccessStatusCode();
+        return response;
+    }
 }

@@ -21,7 +21,7 @@ public sealed class HlsDriver : IProtocolDriver
         M3u8Playlist playlist;
         try
         {
-            text = await FetchTextAsync(url, context, cancellation);
+            text = await DriverHelpers.GetTextAsync(url, context, cancellation);
             playlist = M3u8Playlist.Parse(text);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -39,7 +39,7 @@ public sealed class HlsDriver : IProtocolDriver
             playlistUrl = DriverHelpers.ResolveUrl(best.Url, playlistUrl);
             try
             {
-                text = await FetchTextAsync(playlistUrl, context, cancellation);
+                text = await DriverHelpers.GetTextAsync(playlistUrl, context, cancellation);
                 playlist = M3u8Playlist.Parse(text);
             }
             catch (Exception error) when (error is not OperationCanceledException)
@@ -66,15 +66,6 @@ public sealed class HlsDriver : IProtocolDriver
             DriverHelpers.BaseName(url) + ".ts", -1, AcceptRanges: false, ETag: null, FinalUrl: url,
             DownloadProtocol.Hls,
             new TransferPlan.SegmentFiles(segments, null));
-    }
-
-    private static async Task<string> FetchTextAsync(string url, DriverContext context, CancellationToken cancellation)
-    {
-        using var message = new HttpRequestMessage(HttpMethod.Get, url);
-        DriverHelpers.AddHeaders(message, context.Headers);
-        using var response = await context.Http.SendAsync(message, cancellation);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(cancellation);
     }
 }
 

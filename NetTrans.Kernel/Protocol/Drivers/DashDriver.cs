@@ -21,11 +21,7 @@ public sealed class DashDriver : IProtocolDriver
         XDocument document;
         try
         {
-            using var message = new HttpRequestMessage(HttpMethod.Get, url);
-            DriverHelpers.AddHeaders(message, context.Headers);
-            using var response = await context.Http.SendAsync(message, cancellation);
-            response.EnsureSuccessStatusCode();
-            var text = await response.Content.ReadAsStringAsync(cancellation);
+            var text = await DriverHelpers.GetTextAsync(url, context, cancellation);
             document = XDocument.Parse(text);
         }
         catch (Exception error) when (error is not OperationCanceledException)
