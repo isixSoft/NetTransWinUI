@@ -72,13 +72,21 @@ public sealed partial class RealDownloadKernel
             var headers = HeadersFor(runtime);
             var probe = await _drivers.ProbeAsync(
                 task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
-            if (runtime.Removed) return;
-
-            ApplyProbe(task, probe);
-            session = CreateSession(task, runtime, probe, headers);
-            runtime.Session = session;
-            Log(task, DescribePlan(probe));
-            outcome = await session.RunAsync(cts.Token);
+            if (runtime.Removed)
+            {
+                // removed mid-probe: fall through to the settle block so the
+                // slot is released and the queue wakes up — an early return
+                // here used to leak a MaxSimultaneous slot forever
+                outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
+            }
+            else
+            {
+                ApplyProbe(task, probe);
+                session = CreateSession(task, runtime, probe, headers);
+                runtime.Session = session;
+                Log(task, DescribePlan(probe));
+                outcome = await session.RunAsync(cts.Token);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -90,6 +98,7 @@ public sealed partial class RealDownloadKernel
         }
 
         bool raiseCompleted = false;
+        bool obsolete = false;
 
         lock (_gate)
         {
@@ -101,9 +110,15 @@ public sealed partial class RealDownloadKernel
             }
             _active--;
 
-            if (runtime.Removed || runtime.Generation != generation) return;
-
-            if (runtime.Restart && outcome.Kind != TransferOutcomeKind.Completed)
+            if (runtime.Removed || runtime.Generation != generation)
+            {
+                // no longer the task's live worker (task removed, or a later
+                // generation took over): task state and events belong to the
+                // live worker now — but still wake the queue, since queued
+                // tasks may be waiting for exactly the slot just released.
+                obsolete = true;
+            }
+            else if (runtime.Restart && outcome.Kind != TransferOutcomeKind.Completed)
             {
                 runtime.Restart = false;
                 task.Status = DownloadStatus.Queued;
@@ -142,6 +157,12 @@ public sealed partial class RealDownloadKernel
                         break;
                 }
             }
+        }
+
+        if (obsolete)
+        {
+            Schedule();
+            return;
         }
 
         if (raiseCompleted)

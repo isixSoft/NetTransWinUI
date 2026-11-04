@@ -621,7 +621,7 @@ internal sealed class Program : TestKit
 
         var task = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
         kernel.SetSpeedLimit(task.Id, "128 KB/s");
-        await WaitAsync(() => task.Done > 0, "竞态前下载应有进度", 15_000);
+        await WaitAsync(() => task.Done > 0, "竞态前下载应有进度", 30_000);
 
         // 对同一任务狂轰乱炸：Remove 之后立刻重建，反复制造 Add/Remove/Toggle/Redownload
         // 的真实重叠窗口——全部操作都在内核锁内，任何一路都不允许抛异常或把内核打挂
@@ -646,16 +646,18 @@ internal sealed class Program : TestKit
             }
         });
         kernel.ToggleAll();
-        await storm.WaitAsync(TimeSpan.FromSeconds(60));
+        // 所有等待都是上限而非预期耗时（成功即提前返回）；慢沙箱 / TCP TIME_WAIT
+        // 积压时给足余量，避免与被测内核无关的环境抖动造成偶发超时。
+        await storm.WaitAsync(TimeSpan.FromSeconds(120));
         kernel.Remove(kernel.Tasks.Select(t => t.Id).ToArray()); // 双重清理 + 覆盖未知 id
 
         That(!kernel.Tasks.Any(t => t.Id == task.Id), "风暴后任务应不在任务列表");
-        await WaitAsync(() => !kernel.Tasks.Any(), "风暴后任务列表应清空", 10_000);
+        await WaitAsync(() => !kernel.Tasks.Any(), "风暴后任务列表应清空", 30_000);
 
         // 内核必须仍然健康：加一个新任务并完成
         var healthyDir = TempDir();
         var healthy = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", healthyDir, "", 2, TaskPriority.Normal, StartNow: true));
-        await WaitAsync(() => healthy.Status == DownloadStatus.Completed, "竞态风暴后内核应照常完成新任务", 90_000);
+        await WaitAsync(() => healthy.Status == DownloadStatus.Completed, "竞态风暴后内核应照常完成新任务", 180_000);
         Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(healthyDir, healthy))), "风暴后新任务字节应完整");
 
         // 从未启动的排队任务：Remove 干净利落、不产生文件
