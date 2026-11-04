@@ -63,6 +63,9 @@ internal static class Program
         await RunAsync("16a. SegmentTable.Split 边界切分（单元）", SegmentSplitUnitAsync);
         await RunAsync("16b. checkpoint 往返与 Restore 校验（单元）", CheckpointRoundTripUnitAsync);
         await RunAsync("16c. ChunkedFileWriter 乱序直写 + 并发（单元）", ChunkedWriterUnitAsync);
+        await RunAsync("17a. Checksums：算法识别 + 校验清单解析（单元）", ChecksumsUnitAsync);
+        await RunAsync("17b. 期望哈希校验：MD5/SHA-256 匹配与不匹配", () => ExpectedHashAsync(server));
+        await RunAsync("17c. 本地签名库：历史指纹记录/一致/变化 + 持久化", () => HashDatabaseAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -952,6 +955,142 @@ internal static class Program
         That(assembled.SequenceEqual(Enumerable.Range(0, 8).SelectMany(_ => strip)), "8 条带乱序并发写入后应字节精确复原");
 
         return Task.CompletedTask;
+    }
+
+    // ── 16. 哈希校验（Ubuntu SHA256SUMS 模式） ─────────────────────────────
+
+    private static async Task ChecksumsUnitAsync()
+    {
+        // 算法识别：长度 + 十六进制字符集
+        Equal("MD5", Checksums.DetectAlgorithm("d41d8cd98f00b204e9800998ecf8427E"), "32 位十六进制 → MD5");
+        Equal("SHA-1", Checksums.DetectAlgorithm("DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"), "40 位十六进制 → SHA-1");
+        Equal("SHA-256", Checksums.DetectAlgorithm(new string('a', 64)), "64 位十六进制 → SHA-256");
+        Equal((string?)null, Checksums.DetectAlgorithm(new string('g', 32)), "非十六进制 → null");
+        Equal((string?)null, Checksums.DetectAlgorithm(new string('a', 33)), "33 位 → null");
+        Equal((string?)null, Checksums.DetectAlgorithm(""), "空串 → null");
+        Equal((string?)null, Checksums.DetectAlgorithm(null), "null → null");
+
+        // 校验清单解析：GNU 行（含 * 二进制标记、./ 前缀）+ BSD 行 + 注释 + 坏行
+        var manifest = """
+            # SHA256SUMS for noble (注释与空行应忽略)
+
+            d41d8cd98f00b204e9800998ecf8427e  ubuntu.iso
+            e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 *./pool/test.deb
+            MD5 (file.bin) = d41d8cd98f00b204e9800998ecf8427e
+            SHA256 (x.iso) = E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
+            这是一行无法识别的乱码
+            nothex  filename.zip
+            """;
+        var entries = Checksums.ParseChecksumFile(manifest);
+        Equal(4, entries.Count, $"应解析出 4 条有效指纹（实际 {entries.Count}）");
+        That(entries.Any(e => e.FileName == "ubuntu.iso" && e.Algorithm == "MD5"),
+            "GNU 行应解析出 ubuntu.iso/MD5");
+        That(entries.Any(e => e.FileName == "pool/test.deb" && e.Algorithm == "SHA-256" && e.Hash.StartsWith("E3B0")),
+            "./ 前缀应剥离、* 标记应忽略（pool/test.deb/SHA-256）");
+        That(entries.Any(e => e.FileName == "file.bin" && e.Algorithm == "MD5"), "BSD 行 MD5 应解析");
+        That(entries.Any(e => e.FileName == "x.iso" && e.Hash == e.Hash.ToUpperInvariant()), "BSD 行 SHA-256 大写哈希应统一大写");
+
+        // 同文件名后行覆盖前行（镜像里常见多算法清单同名场景按最后一次为准）
+        var overrideEntries = Checksums.ParseChecksumFile(
+            "0123456789abcdef0123456789abcdef  a.bin\n" +
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  a.bin");
+        Equal(1, overrideEntries.Count, "同名指纹应去重");
+        Equal("SHA-256", overrideEntries[0].Algorithm, "同名后行覆盖前行");
+
+        await Task.CompletedTask;
+    }
+
+    private static async Task ExpectedHashAsync(TestServer server)
+    {
+        var sha256Data = Payload(256 * 1024);
+        var md5Data = Payload(128 * 1024);
+        var plain = Payload(64 * 1024);
+        server.Map("hash/sha.bin", server.RangeFile(sha256Data, etag: "\"hash-sha\""));
+        server.Map("hash/md5.bin", server.RangeFile(md5Data, etag: "\"hash-md5\""));
+        server.Map("hash/bad.bin", server.RangeFile(plain, etag: "\"hash-bad\""));
+
+        // SHA-256 期望指纹：匹配 → Completed + Checksum「已校验」
+        var shaHex = Convert.ToHexString(SHA256.HashData(sha256Data)).ToLowerInvariant();
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "hash/sha.bin", TempDir(), "", 2,
+                TaskPriority.Normal, StartNow: true, ExpectedHash: shaHex));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "SHA-256 匹配任务应完成", 30_000);
+            Equal("SHA-256 已校验", task.Checksum, "匹配时 Checksum 应为「SHA-256 已校验」");
+            That(task.Log.Any(l => l.Message.Contains("已记录签名")), "首次下载应记录签名");
+        }
+
+        // MD5 期望指纹：32 位自动判别为 MD5
+        var md5Hex = Convert.ToHexString(MD5.HashData(md5Data));
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "hash/md5.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, ExpectedHash: md5Hex));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "MD5 匹配任务应完成", 30_000);
+            Equal("MD5 已校验", task.Checksum, "32 位期望指纹应按 MD5 校验");
+        }
+
+        // 期望指纹不匹配：任务必须转 Error，错误信息含期望/实际指纹
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var wrong = new string('0', 64);
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "hash/bad.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, ExpectedHash: wrong));
+            await WaitAsync(() => task.Status == DownloadStatus.Error, "指纹不匹配应转 Error", 30_000);
+            That(task.ErrorMessage!.Contains("SHA-256 校验失败") && task.ErrorMessage!.Contains("期望") && task.ErrorMessage!.Contains("实际"),
+                $"错误信息应说明期望/实际指纹（实际「{task.ErrorMessage}」）");
+            Equal("SHA-256 校验失败", task.Checksum, "Checksum 应标注校验失败");
+            That(task.Log.Any(l => l.IsError), "日志应有失败行");
+        }
+    }
+
+    private static async Task HashDatabaseAsync(TestServer server)
+    {
+        var data = Payload(128 * 1024);
+        server.Map("db/file.bin", server.RangeFile(data, etag: "\"db-1\""));
+        var dbPath = Path.Combine(TempDir(), "signatures", ".nettrans-checksums.json");
+
+        // 第一次下载：记录签名 + 落盘
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, HashDatabasePath = dbPath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "db/file.bin", TempDir(), "", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "首次下载应完成", 30_000);
+            That(task.Log.Any(l => l.Message.Contains("已记录签名")), "首次下载日志应「已记录签名」");
+        }
+        That(File.Exists(dbPath), "签名库文件应落盘");
+        var raw = File.ReadAllText(dbPath);
+        That(raw.Contains(server.Base + "db/file.bin") && raw.Contains("SHA-256"), "签名库 JSON 应含 URL 与算法");
+
+        // 第二次下载同 URL：与历史签名一致
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, HashDatabasePath = dbPath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "db/file.bin", TempDir(), "", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "二次下载应完成", 30_000);
+            That(task.Log.Any(l => l.Message.Contains("与历史签名一致")),
+                $"二次下载应「与历史签名一致」，实际日志：{string.Join(" | ", task.Log.Select(l => l.Message))}");
+            Equal("SHA-256 已校验", task.Checksum, "一致时 Checksum 不应带「签名变化」");
+        }
+
+        // 换内容再下（同 URL，同长度异字节）：签名变化要显著标注（完成但日志记警告）
+        var tampered = data.Select(b => (byte)(b ^ 0x5A)).ToArray();
+        server.Map("db/file.bin", server.RangeFile(tampered, etag: "\"db-2\""));
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, HashDatabasePath = dbPath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "db/file.bin", TempDir(), "", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "内容变化下载仍应完成（换源属正常业务）", 30_000);
+            That(task.Checksum!.Contains("签名变化"), $"Checksum 应标注签名变化（实际「{task.Checksum}」）");
+            That(task.Log.Any(l => l.IsError && l.Message.Contains("与历史签名不一致")), "日志应有「与历史签名不一致」警告行");
+        }
+
+        // 损坏签名库：降级为空库重建，不影响下载
+        File.WriteAllText(dbPath, "{这不是 JSON");
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, HashDatabasePath = dbPath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "db/file.bin", TempDir(), "", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "损坏签名库下下载应照常完成", 30_000);
+            That(task.Log.Any(l => l.Message.Contains("已记录签名")), "损坏库应降级重建（重新记录签名）");
+            That(!File.ReadAllText(dbPath).StartsWith("{这不是 JSON"), "损坏库应被重建为合法 JSON");
+        }
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

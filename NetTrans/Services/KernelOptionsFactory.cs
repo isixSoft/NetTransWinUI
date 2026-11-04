@@ -32,6 +32,11 @@ public static class KernelOptionsFactory
             UncappedAtNight = settings.UncappedAtNight,
             OffPeakStart = settings.OffPeakStart,
             OffPeakEnd = settings.OffPeakEnd,
+            // 本地签名库跟着下载根目录走（.nettrans-checksums.json）；
+            // 未配置下载目录则不落盘，只保留进程内历史。
+            HashDatabasePath = string.IsNullOrWhiteSpace(settings.DefaultSavePath)
+                ? null
+                : Path.Combine(settings.DefaultSavePath.Trim(), ".nettrans-checksums.json"),
         };
         options.RetryCount = ParseLeadingInt(settings.RetryPolicy, options.RetryCount);
         return options;

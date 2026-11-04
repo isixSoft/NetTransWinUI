@@ -48,6 +48,9 @@ public sealed class DownloadTask
     public string AddedAt { get; set; } = "";
     public string? Checksum { get; set; }
 
+    /// <summary>期望指纹（十六进制，算法按长度判别）；null = 未要求校验。</summary>
+    public string? ExpectedHash { get; set; }
+
     /// <summary>BT-only fields; null on plain HTTP tasks, which switches the inspector's row from 节点/种子 to 校验.</summary>
     public int? Peers { get; set; }
     public int? Seeds { get; set; }

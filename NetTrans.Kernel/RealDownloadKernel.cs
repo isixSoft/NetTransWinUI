@@ -27,6 +27,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
     private readonly KernelOptions _options;
     private readonly HttpClient _http;
     private readonly ProtocolDriverRegistry _drivers;
+    private readonly HashDatabase _hashes;
     private readonly object _gate = new();
     private readonly List<DownloadTask> _tasks = new();
     private readonly Dictionary<int, Runtime> _runtimes = new();
@@ -63,6 +64,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
         _options = options ?? new KernelOptions();
         _http = BuildClient(_options);
         _drivers = new ProtocolDriverRegistry(_options, _http);
+        _hashes = new HashDatabase(_options.HashDatabasePath);
         _timer = new System.Threading.Timer(
             Tick, null, TimeSpan.FromSeconds(TickSeconds), TimeSpan.FromSeconds(TickSeconds));
     }
@@ -803,16 +805,53 @@ public sealed class RealDownloadKernel : IDownloadKernel
     }
 
     // ── checksum / checkpoints / files ────────────────────────────────────
+
+    /// <summary>
+    /// 完成后的指纹校验（Ubuntu SHA256SUMS 模式）：
+    /// ① 任务带 ExpectedHash（发布页/校验清单抄来的）→ 按长度判别算法（MD5/SHA-1/SHA-256）
+    ///    并与实际指纹比对，不匹配任务转入 Error（文件不可信，不能当完成处理）；
+    /// ② 指纹写入本地签名库（URL 键）：再次下载同源时与历史比对，
+    ///    内容变化在 Checksum/日志里显著标注（不失败——换源/动态内容属正常业务）。
+    /// </summary>
     private async Task VerifyChecksumAsync(DownloadTask task, Runtime? runtime)
     {
         try
         {
             var path = TargetPathFor(task, runtime);
-            var hash = await Task.Run(() => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
+            var algorithm = Checksums.DetectAlgorithm(task.ExpectedHash) ?? "SHA-256";
+            var hash = await Task.Run(() => Checksums.Compute(algorithm, path));
+
+            if (task.ExpectedHash is not null &&
+                !string.Equals(hash, task.ExpectedHash.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                lock (_gate)
+                {
+                    task.Checksum = $"{algorithm} 校验失败";
+                    task.Status = DownloadStatus.Error;
+                    task.ErrorMessage =
+                        $"{algorithm} 校验失败：期望 {task.ExpectedHash.Trim().ToLowerInvariant()}，实际 {hash.ToLowerInvariant()}";
+                    task.Log.Add(new LogEntry(Stamp(), task.ErrorMessage, IsError: true));
+                }
+                return; // TaskCompleted 仍会触发，但状态已是 Error
+            }
+
+            var history = _hashes.Find(task.Url);
+            var consistent = history is not null &&
+                string.Equals(history.Hash, hash, StringComparison.OrdinalIgnoreCase);
+            var verdict = history is null
+                ? "已记录签名"
+                : consistent
+                    ? "与历史签名一致"
+                    : $"与历史签名不一致（原 {history.Algorithm} {history.Hash[..Math.Min(16, history.Hash.Length)].ToLowerInvariant()}…）";
+            _hashes.Record(new HashDatabase.Entry(task.Url, task.Name, task.Size, algorithm, hash, Stamp()));
+
             lock (_gate)
             {
-                task.Checksum = "SHA-256 已校验";
-                task.Log.Add(new LogEntry(Stamp(), $"SHA-256 {hash[..16].ToLowerInvariant()}…"));
+                task.Checksum = history is null || consistent
+                    ? $"{algorithm} 已校验"
+                    : $"{algorithm} 已校验（签名变化）";
+                task.Log.Add(new LogEntry(Stamp(), $"{algorithm} {hash[..16].ToLowerInvariant()}…（{verdict}）",
+                    IsError: history is not null && !consistent));
             }
         }
         catch (Exception error)
@@ -967,6 +1006,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
             Connections = request.StartNow ? Math.Clamp(request.Connections, 1, 32) : 0,
             Status = request.StartNow ? DownloadStatus.Queued : DownloadStatus.Paused,
             AddedAt = "今天 " + DateTime.Now.ToString("HH:mm"),
+            ExpectedHash = string.IsNullOrWhiteSpace(request.ExpectedHash) ? null : request.ExpectedHash.Trim(),
         };
     }
 

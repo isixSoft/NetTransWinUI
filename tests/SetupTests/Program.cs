@@ -31,6 +31,7 @@ internal static class Program
         Run("9.  保存路径 + 分类文件夹映射", SavePathMapping);
         Run("10. 夜间不限速设置映射", NightLimitMapping);
         Run("11. OffPeak 窗口判断（跨午夜/边界/垃圾）", OffPeakWindowLogic);
+        Run("12. 本地签名库路径映射", HashDatabaseMapping);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -237,6 +238,24 @@ internal static class Program
     {
         var parts = hhmm.Split(':');
         return new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), 0);
+    }
+
+    // ── 12. 本地签名库路径映射 ────────────────────────────────────────────
+
+    private static void HashDatabaseMapping()
+    {
+        // 签名库跟着下载根目录走：DefaultSavePath 非空 → <目录>/.nettrans-checksums.json
+        var options = KernelOptionsFactory.Create(new AppSettings { DefaultSavePath = @"D:\Downloads" });
+        Equal(Path.Combine("D:\\Downloads", ".nettrans-checksums.json"), options.HashDatabasePath,
+            "签名库应落在下载根目录下");
+
+        // 未配置下载目录 → 不落盘（只保留进程内历史）
+        Equal((string?)null, KernelOptionsFactory.Create(new AppSettings { DefaultSavePath = "" }).HashDatabasePath,
+            "无 DefaultSavePath → 签名库不落盘");
+        // AppSettings 默认值就是 D:\Downloads → 签名库跟着默认目录走
+        Equal(Path.Combine("D:\\Downloads", ".nettrans-checksums.json"),
+            KernelOptionsFactory.Create(new AppSettings()).HashDatabasePath,
+            "默认设置下签名库应跟随默认下载目录");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

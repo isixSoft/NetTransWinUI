@@ -77,6 +77,12 @@ public sealed class KernelOptions
     /// <summary>Off-peak window end, "HH:mm" (e.g. "07:00").</summary>
     public string OffPeakEnd { get; set; } = "07:00";
 
+    /// <summary>
+    /// 本地签名库文件（JSON，URL → 指纹历史）：每个完成的下载记录哈希，
+    /// 再次下载同源时自动比对。null = 只进内存不落盘。
+    /// </summary>
+    public string? HashDatabasePath { get; set; }
+
     /// <summary>Checkpoints (断点续传) are written next to the target file with this suffix.</summary>
     public string CheckpointSuffix { get; set; } = ".nettrans.json";
 

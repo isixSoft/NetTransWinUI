@@ -78,7 +78,7 @@ string checkpointPath;
     await WaitUntilAsync(
         () => taskB.Log.Any(l => l.Message.StartsWith("SHA-256 ") || l.Message.StartsWith("校验失败")),
         TimeSpan.FromSeconds(15), "SHA-256 校验日志出现", failures, taskB);
-    Check(taskB.Log.Any(l => l.Message == $"SHA-256 {expected16}…"),
+    Check(taskB.Log.Any(l => l.Message.StartsWith($"SHA-256 {expected16}…")),
         $"完成校验日志出现（期望 SHA-256 {expected16}…）", ref checks, failures);
     Check(!taskB.Log.Any(l => l.Message.StartsWith("校验失败")),
         "无「校验失败」日志", ref checks, failures);
