@@ -603,6 +603,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
             ETag = probe.ETag,
             Connections = Math.Clamp(task.Connections > 0 ? task.Connections : _options.ConnectionsPerTask, 1, 32),
             RetryCount = _options.RetryCount,
+            SmallFileThresholdBytes = _options.SmallFileThresholdBytes,
             Headers = headers,
             Checkpoint = LoadCheckpoint(savePath),
             CheckpointChanged = checkpoint => PersistCheckpoint(savePath, checkpoint),

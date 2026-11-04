@@ -42,6 +42,12 @@ public sealed class TransferRequest
     public int Connections { get; init; } = 8;
     public int RetryCount { get; init; } = 3;
 
+    /// <summary>
+    /// 小文件阈值（字节）：已知大小不超过它的任务全程内存缓冲，完成时一次性
+    /// 落盘——不预分配、无半截中间态、不写断点。0 = 关闭，一律直写磁盘。
+    /// </summary>
+    public long SmallFileThresholdBytes { get; init; } = 4 * 1024 * 1024;
+
     /// <summary>Per-request headers (cookies / referer), already merged with defaults by the kernel.</summary>
     public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
 
@@ -97,6 +103,18 @@ public sealed class TransferSession
     /// </summary>
     private readonly object _checkpointGate = new();
     private bool _checkpointClosed;
+
+    /// <summary>当前 sink 是否内存缓冲（小文件）：决定断点写入与暂停日志是否有意义。</summary>
+    private bool _memorySink;
+
+    /// <summary>
+    /// Serializes worker "write + account" steps against checkpoint flushes:
+    /// a checkpoint must snapshot <c>Done</c> only after the sink has flushed
+    /// everything those bytes were accounted for, or a resumed transfer would
+    /// leave holes for bytes still sitting in <see cref="DirectSink"/>'s
+    /// staging buffer.
+    /// </summary>
+    private readonly object _accountGate = new();
 
     private const int ModeIdle = 0;
     private const int ModeRanges = 1;
@@ -320,19 +338,24 @@ public sealed class TransferSession
         Interlocked.Exchange(ref _total, plan.Size);
         var sources = new MirrorSourceSet(plan.Url, plan.Mirrors);
 
-        using var writer = new ChunkedFileWriter(_request.SavePath, plan.Size > 0 ? plan.Size : null);
+        // 断点恢复时半截数据已在盘上，必须直写续传；全新任务且大小已知且
+        // 不超过小文件阈值时走内存缓冲，完成时一次性落盘
+        using var sink = table.Restored
+            ? new DirectSink(_request.SavePath, plan.Size > 0 ? plan.Size : null)
+            : CreateSink(plan.Size > 0 ? plan.Size : null);
+        _memorySink = sink is MemorySink;
         if (plan.Size <= 0) Log("服务器未提供文件大小，无法断点续传");
         if (plan.Size > 0 && !plan.AcceptRanges) Log("服务器不支持分段下载，使用单连接");
         if (plan.Mirrors.Count > 0) Log($"已启用 {plan.Mirrors.Count} 个镜像源");
 
         using var checkpointTimer = new Timer(
-            _ => SaveRangeCheckpoint(table), null,
+            _ => SaveRangeCheckpoint(table, sink), null,
             TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
         return await RunWorkersAsync(
-            writer, cancellation,
-            onPaused: () => SaveRangeCheckpoint(table),
-            body: (slot, token) => RangeWorkerAsync(slot, writer, sources, token, plan.AcceptRanges));
+            sink, cancellation,
+            onPaused: () => SaveRangeCheckpoint(table, sink),
+            body: (slot, token) => RangeWorkerAsync(slot, sink, sources, token, plan.AcceptRanges));
     }
 
     /// <summary>Restore the checkpoint when it matches the fresh probe; split fresh otherwise.</summary>
@@ -372,10 +395,12 @@ public sealed class TransferSession
         Interlocked.Exchange(ref _total, plan.TotalSize ?? -1);
 
         var committed = new List<long>();
+        bool restored = false;
         if (_request.Checkpoint is { Kind: "segments" } checkpoint && checkpoint.Fingerprint == _fingerprint)
         {
             committed.AddRange(checkpoint.Committed);
-            Log($"已从断点恢复，已完成 {committed.Count}/{_files.Length} 个分段");
+            restored = committed.Count > 0;
+            if (restored) Log($"已从断点恢复，已完成 {committed.Count}/{_files.Length} 个分段");
         }
         else if (_request.Checkpoint is { Kind: "segments" })
         {
@@ -386,16 +411,25 @@ public sealed class TransferSession
         _writeOffset = committed.Sum();
         _nextSegment = committed.Count;
 
-        using var writer = new ChunkedFileWriter(_request.SavePath, plan.TotalSize);
+        // 已提交的分段数据已在盘上，恢复必须直写；全新任务按大小选 sink
+        using var sink = restored
+            ? new DirectSink(_request.SavePath, plan.TotalSize)
+            : CreateSink(plan.TotalSize);
+        _memorySink = sink is MemorySink;
 
         var buffers = new Dictionary<int, byte[]>();
         var buffersGate = new object();
 
         void SaveCheckpoint()
         {
-            if (_request.CheckpointChanged is null) return;
+            if (_request.CheckpointChanged is null || _memorySink) return; // 内存缓冲无中间态可续
             long[] snapshot;
-            lock (buffersGate) snapshot = committed.ToArray();
+            lock (buffersGate)
+            {
+                // 先把 staging 冲到盘上再快照 committed：恢复不得对暂存字节留空洞
+                sink.Flush();
+                snapshot = committed.ToArray();
+            }
             if (snapshot.Length == 0) return;
             lock (_checkpointGate)
             {
@@ -417,13 +451,13 @@ public sealed class TransferSession
             TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
         return await RunWorkersAsync(
-            writer, cancellation,
+            sink, cancellation,
             onPaused: SaveCheckpoint,
-            body: (slot, token) => SegmentWorkerAsync(slot, token, writer, buffers, buffersGate, committed));
+            body: (slot, token) => SegmentWorkerAsync(slot, token, sink, buffers, buffersGate, committed));
     }
 
     private async Task SegmentWorkerAsync(
-        int slot, CancellationToken cancellation, ChunkedFileWriter writer,
+        int slot, CancellationToken cancellation, IFileSink sink,
         Dictionary<int, byte[]> buffers, object buffersGate, List<long> committed)
     {
         while (!cancellation.IsCancellationRequested)
@@ -446,7 +480,7 @@ public sealed class TransferSession
                 {
                     buffers.Remove(_committedCount);
                     Interlocked.Decrement(ref _bufferedCount);
-                    writer.Write(_writeOffset, ready, ready.Length);
+                    sink.Write(_writeOffset, ready, ready.Length);
                     _writeOffset += ready.Length;
                     committed.Add(ready.LongLength);
                     _committedCount++;
@@ -498,7 +532,8 @@ public sealed class TransferSession
         _pieces = SegmentTable.Split(plan.Url, plan.Size, null, 1).Segments;
         InitSpeedSlots(1);
 
-        using var writer = new ChunkedFileWriter(_request.SavePath, plan.Size > 0 ? plan.Size : null);
+        using var sink = CreateSink(plan.Size > 0 ? plan.Size : null);
+        _memorySink = sink is MemorySink;
         Log(plan.Url.StartsWith("ftps", StringComparison.OrdinalIgnoreCase)
             ? "FTPS · 单连接流式传输（FTP REST 跨服务器不可靠，未启用断点续传）"
             : "FTP · 单连接流式传输（FTP REST 跨服务器不可靠，未启用断点续传）");
@@ -526,7 +561,7 @@ public sealed class TransferSession
                 while ((n = await source.ReadAsync(buffer, cancellation)) > 0)
                 {
                     await ThrottleAsync(n, cancellation);
-                    writer.Write(written, buffer, n);
+                    sink.Write(written, buffer, n);
                     written += n;
                     Interlocked.Exchange(ref _done, written);
                     SpeedTick(0, n);
@@ -535,7 +570,7 @@ public sealed class TransferSession
                 if (Interlocked.Read(ref _total) > 0 && written < Interlocked.Read(ref _total))
                     throw new IOException("FTP 连接在完成前中断");
 
-                writer.Flush();
+                sink.Complete();
                 return new TransferOutcome(TransferOutcomeKind.Completed, null);
             }
             catch (OperationCanceledException)
@@ -566,7 +601,7 @@ public sealed class TransferSession
 
     // ── the shared worker harness ─────────────────────────────────────────
     private async Task<TransferOutcome> RunWorkersAsync(
-        ChunkedFileWriter writer,
+        IFileSink sink,
         CancellationToken cancellation,
         Action? onPaused,
         Func<int, CancellationToken, Task> body)
@@ -605,7 +640,7 @@ public sealed class TransferSession
             if (cancellation.IsCancellationRequested)
             {
                 onPaused?.Invoke();
-                Log("已暂停，断点已保存");
+                Log(_memorySink ? "已暂停（小文件内存缓冲，进度不落盘）" : "已暂停，断点已保存");
                 return new TransferOutcome(TransferOutcomeKind.Paused, null);
             }
 
@@ -631,11 +666,11 @@ public sealed class TransferSession
         if (_mode == ModeFiles && _committedCount < _files.Length)
             return new TransferOutcome(TransferOutcomeKind.Failed, "分段传输提前结束");
 
-        writer.Flush();
+        sink.Complete();
         return new TransferOutcome(TransferOutcomeKind.Completed, null);
     }
 
-    private async Task RangeWorkerAsync(int slot, ChunkedFileWriter writer, MirrorSourceSet? sources, CancellationToken cancellation, bool acceptRanges)
+    private async Task RangeWorkerAsync(int slot, IFileSink sink, MirrorSourceSet? sources, CancellationToken cancellation, bool acceptRanges)
     {
         var pieces = _pieces;
         var buffer = new byte[ChunkSize];
@@ -700,8 +735,12 @@ public sealed class TransferSession
                             : (int)Math.Min(n, piece.End - piece.Start - piece.Done);
                         if (take <= 0) break;
                         await ThrottleAsync(take, cancellation);
-                        writer.Write(piece.Start + piece.Done, buffer, take);
-                        piece.Done += take;
+                        lock (_accountGate)
+                        {
+                            // 写入与记账必须原子：断点快照在同一个门内先 flush 再读 Done
+                            sink.Write(piece.Start + piece.Done, buffer, take);
+                            piece.Done += take;
+                        }
                         Interlocked.Add(ref _done, take);
                         SpeedTick(slot, take);
                         if (piece.End != long.MaxValue && piece.Done >= piece.End - piece.Start) break;
@@ -721,16 +760,39 @@ public sealed class TransferSession
     }
 
     // ── checkpoints ───────────────────────────────────────────────────────
-    private void SaveRangeCheckpoint(SegmentTable table)
+    private void SaveRangeCheckpoint(SegmentTable table, IFileSink sink)
     {
         if (_request.CheckpointChanged is null || table.Size <= 0) return;
-        lock (_checkpointGate)
+        if (_memorySink) return; // 内存缓冲无半截文件可续，断点没有意义
+        lock (_accountGate)
         {
-            if (_checkpointClosed) return;
-            if (table.DoneBytes == 0 && !table.Restored) return;
-            if (table.DoneBytes >= table.Size) return; // 完成在即：不写陈旧断点
-            _request.CheckpointChanged.Invoke(table.ToCheckpoint());
+            // 先把 staging 冲到盘上再快照 Done：保证 Done ≤ 磁盘已写字节，
+            // 断点恢复才不会对仍在暂存里的字节留下空洞
+            sink.Flush();
+            lock (_checkpointGate)
+            {
+                if (_checkpointClosed) return;
+                if (table.DoneBytes == 0 && !table.Restored) return;
+                if (table.DoneBytes >= table.Size) return; // 完成在即：不写陈旧断点
+                _request.CheckpointChanged.Invoke(table.ToCheckpoint());
+            }
         }
+    }
+
+    // ── output sinks ──────────────────────────────────────────────────────
+    /// <summary>
+    /// Choose where bytes land: known-size bodies within the small-file
+    /// threshold buffer fully in memory and materialize once at completion;
+    /// everything else writes through the preallocated file with aggregation.
+    /// </summary>
+    private IFileSink CreateSink(long? knownSize)
+    {
+        if (_request.SmallFileThresholdBytes > 0 && knownSize is > 0 && knownSize <= _request.SmallFileThresholdBytes)
+        {
+            Log($"小文件（{FormatSize(knownSize.Value)}）走内存缓冲，完成时一次性落盘");
+            return new MemorySink(_request.SavePath, knownSize.Value);
+        }
+        return new DirectSink(_request.SavePath, knownSize > 0 ? knownSize : null);
     }
 
     /// <summary>

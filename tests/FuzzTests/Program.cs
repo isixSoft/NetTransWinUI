@@ -182,7 +182,8 @@ internal static class Program
     private static async Task CheckpointRoundAsync(TestServer server, int round, int seed, Stats stats)
     {
         var rng = new Random(seed);
-        var data = new byte[1 * MiB];
+        // 断点续传是大文件直写（DirectSink）语义：载荷必须超过小文件内存缓冲阈值（默认 4MB）
+        var data = new byte[6 * MiB];
         rng.NextBytes(data);
         string etag = $"\"fuzz3-{round}\"";
         string route = $"f3/r{round}.bin";

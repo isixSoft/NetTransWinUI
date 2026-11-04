@@ -73,7 +73,9 @@ internal static class Program
         That(File.ReadAllBytes(path).AsSpan().SequenceEqual(data), "文件字节应与源站完全一致");
         That(task.Blocks.Length == 96 && task.Blocks.All(b => b == 1), "完成后 96 块应全部点亮");
         That(task.Size == data.Length && task.Done == task.Size, $"Size/Done 应到满（实际 {task.Done}/{task.Size}）");
-        That(task.Log.Any(l => l.Message.StartsWith("SHA-256 ")), "日志应出现 SHA-256 校验行");
+        // Status 先于校验翻转（内核完成即报 Completed，SHA-256 行稍后写入）：等待校验信号
+        await WaitUntilAsync(() => task.Log.Any(l => l.Message.StartsWith("SHA-256 ")),
+            TimeSpan.FromSeconds(15), "日志应出现 SHA-256 校验行", kernel);
         That(!File.Exists(path + ".nettrans.json"), "完成后 checkpoint 应被清除");
     }
 
@@ -81,7 +83,8 @@ internal static class Program
 
     private static async Task ResumeSameKernelAsync(TestServer server)
     {
-        var data = Payload(2 * MiB, seed: 7);
+        // 断点续传是大文件直写（DirectSink）语义：载荷必须超过小文件内存缓冲阈值（默认 4MB）
+        var data = Payload(6 * MiB, seed: 7);
         server.Map("e2e/resume.bin", server.RangeFile(data, etag: "\"e2e-resume-1\""));
         var dir = TempDir("resume");
 

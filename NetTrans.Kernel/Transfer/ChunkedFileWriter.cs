@@ -20,12 +20,14 @@ public sealed class ChunkedFileWriter : IDisposable
         if (preallocate is > 0) _stream.SetLength(preallocate.Value);
     }
 
-    public void Write(long offset, byte[] buffer, int count)
+    public void Write(long offset, byte[] buffer, int count) => Write(offset, buffer, 0, count);
+
+    public void Write(long offset, byte[] buffer, int offsetInBuffer, int count)
     {
         lock (_gate)
         {
             _stream.Seek(offset, SeekOrigin.Begin);
-            _stream.Write(buffer, 0, count);
+            _stream.Write(buffer, offsetInBuffer, count);
         }
     }
 

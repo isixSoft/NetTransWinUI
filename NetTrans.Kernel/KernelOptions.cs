@@ -87,6 +87,12 @@ public sealed class KernelOptions
     public string CheckpointSuffix { get; set; } = ".nettrans.json";
 
     /// <summary>
+    /// 小文件阈值（字节）：已知大小不超过它的任务全程内存缓冲，完成时一次性
+    /// 落盘——无预分配、无半截中间态、不写断点。0 = 关闭（一律直写磁盘）。
+    /// </summary>
+    public long SmallFileThresholdBytes { get; set; } = 4 * 1024 * 1024;
+
+    /// <summary>
     /// External-engine slot for the BT / eD2k data plane: when a probe resolves
     /// to an <see cref="TransferPlan.ExternalEngine"/> plan, this runner is
     /// invoked with the plan, the resolved save path and a cancellation token.

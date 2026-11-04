@@ -233,7 +233,8 @@ internal static class Program
         kernel.Redownload(task.Id);
         await WaitAsync(() => task.Status == DownloadStatus.Completed, "修正后重下应完成", 60_000);
         That(File.ReadAllBytes(Path.Combine(task.SavePath, "app.bin")).SequenceEqual(good), "重下文件字节精确");
-        Equal("SHA-256 已校验", task.Checksum, "重下应校验通过");
+        // Status 先于校验翻转（内核完成即报 Completed，Checksum 稍后标注）：等待校验信号
+        await WaitAsync(() => task.Checksum == "SHA-256 已校验", "重下应校验通过", 15_000);
         That(task.Log.Any(l => l.Message.Contains("已记录签名")), "重下完成应记录签名");
     }
 
@@ -243,7 +244,8 @@ internal static class Program
 
     private static async Task RestartResumeAsync(TestServer server)
     {
-        var data = Payload(2048 * 1024);
+        // 断点续传是大文件直写（DirectSink）语义：载荷必须超过小文件内存缓冲阈值（默认 4MB）
+        var data = Payload(6 * 1024 * 1024);
         var resumedStarts = new List<long>();
         server.Map("restart/big.bin", server.RangeFile(data, etag: "\"restart\"", onGet: (n, ctx) =>
         {
