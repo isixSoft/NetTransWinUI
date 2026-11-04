@@ -71,6 +71,7 @@ internal sealed partial class Program : TestKit
         await RunAsync("18c. PT 种子：tracker 脱敏 + 做种占位符渲染", () => PtTorrentSeedAsync(server));
         await RunAsync("19a. 小文件内存缓冲：完成前不落盘/无断点/暂停丢弃/目录自建", () => MemorySinkAsync(server));
         await RunAsync("19b. DirectSink 聚合：写合并正确性 + 乱序断续（单元）", DirectSinkUnitAsync);
+        await RunAsync("19c. 真流式：无 ContentLength 的 HTTP 响应应完成", () => TrueStreamingAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

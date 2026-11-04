@@ -85,6 +85,36 @@ internal sealed partial class Program
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 真·流式响应：全程无 ContentLength（HttpListener 自动 chunked），HEAD 与
+    /// GET 都不给长度。内核应把「服务器关流」当作 EOF 完成任务，而不是误判
+    /// 「连接在完成前中断」后全量重试三遍再失败。
+    /// </summary>
+    private static async Task TrueStreamingAsync(TestServer server)
+    {
+        var data = Payload(3 * 1024 * 1024);
+        server.Map("stream/live.bin", ctx =>
+        {
+            if (ctx.Request.HttpMethod == "HEAD")
+            {
+                ctx.Response.ContentType = "application/octet-stream";
+                ctx.Response.Close();
+                return;
+            }
+            ctx.Response.ContentType = "application/octet-stream";
+            ctx.Response.OutputStream.Write(data);
+            ctx.Response.OutputStream.Close();
+            ctx.Response.Close();
+        });
+        var dir = TempDir();
+
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 });
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "stream/live.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status == DownloadStatus.Completed, "无 ContentLength 的流式下载应完成", 60_000);
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(dir, task))), "流式下载字节应完整");
+        Equal(data.Length, task.Size, "完成后 Size 应收紧为实际长度");
+    }
+
     /// <summary>手工 bencode 一个最小种子：announce + announce-list + info{name,length}。</summary>
     private static byte[] BuildTorrent(string announce, string announce2)
     {

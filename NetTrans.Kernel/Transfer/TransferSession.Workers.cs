@@ -163,6 +163,16 @@ public sealed partial class TransferSession
                     }
 
                     if (piece.IsComplete) break;
+
+                    // 流式分段（未知大小）：服务器关流（ReadAsync 返回 0）即 EOF。
+                    // 把 End 收紧为实际长度，IsComplete 随之成立——此前 MaxValue
+                    // 分段永远过不了完成校验，无 ContentLength 的下载在重试耗尽
+                    // 后必然失败，尽管字节早已完整收下。
+                    if (piece.End == long.MaxValue)
+                    {
+                        piece.End = piece.Start + piece.Done;
+                        break;
+                    }
                     throw new IOException("连接在完成前中断");
                 }
                 catch (Exception error) when (error is not OperationCanceledException && attempt < _request.RetryCount)
