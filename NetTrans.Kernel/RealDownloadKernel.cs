@@ -34,6 +34,8 @@ public sealed class RealDownloadKernel : IDownloadKernel
     private readonly System.Threading.Timer _timer;
     private int _nextId = 100;
     private int _active;
+    private bool? _lastWindowExempt;
+    private readonly SpeedLimiter _globalLimiter = new(0); // 共享全局桶：所有任务合计受全局限速约束
 
     private sealed class Runtime
     {
@@ -590,6 +592,7 @@ public sealed class RealDownloadKernel : IDownloadKernel
             SavePath = savePath,
             Http = _http,
             Limiter = runtime.Limiter,
+            GlobalLimiter = _globalLimiter,
             ETag = probe.ETag,
             Connections = Math.Clamp(task.Connections > 0 ? task.Connections : _options.ConnectionsPerTask, 1, 32),
             RetryCount = _options.RetryCount,
@@ -688,6 +691,16 @@ public sealed class RealDownloadKernel : IDownloadKernel
 
         lock (_gate)
         {
+            // 「夜间不限速」窗口边界：豁免状态翻转时立刻重算全部任务的限速，
+            // 不必等用户手动碰一次任务。
+            bool exempt = _options.UncappedAtNight &&
+                InOffPeakWindow(DateTime.Now.TimeOfDay, _options.OffPeakStart, _options.OffPeakEnd);
+            if (exempt != _lastWindowExempt)
+            {
+                _lastWindowExempt = exempt;
+                foreach (var runtime in _runtimes.Values) ApplyLimitLocked(runtime);
+            }
+
             double total = 0;
 
             foreach (var task in _tasks)
@@ -727,11 +740,48 @@ public sealed class RealDownloadKernel : IDownloadKernel
     private void ApplyLimitLocked(Runtime runtime)
     {
         long? global = _options.GlobalSpeedLimit is > 0 ? _options.GlobalSpeedLimit : null;
-        long? perTask = ParseLimit(runtime.Task.SpeedLimit);
-        long? effective = global is null
-            ? perTask
-            : perTask is null ? global : Math.Min(global.Value, perTask.Value);
-        runtime.Limiter.SetLimit(effective);
+        // 「夜间不限速」：inside the off-peak window the global cap is lifted;
+        // an explicitly chosen per-task limit still applies.
+        if (global is not null && _options.UncappedAtNight &&
+            InOffPeakWindow(DateTime.Now.TimeOfDay, _options.OffPeakStart, _options.OffPeakEnd))
+        {
+            global = null;
+        }
+
+        // 共享全局桶：所有任务的合计速率受全局值约束（而不是每任务各享一份）；
+        // 每任务限速仍单独生效，任务实际速率 = min(共享全局, 任务限速)。
+        _globalLimiter.SetLimit(global ?? 0);
+        runtime.Limiter.SetLimit(ParseLimit(runtime.Task.SpeedLimit));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="now"/> falls inside the "HH:mm" off-peak
+    /// window. Supports windows crossing midnight ("23:00"→"07:00").
+    /// Unparseable bounds or a zero-length window mean "no exemption".
+    /// Pure so tests can drive it.
+    /// </summary>
+    public static bool InOffPeakWindow(TimeSpan now, string? start, string? end)
+    {
+        var from = ParseClock(start);
+        var to = ParseClock(end);
+        if (from is not { } a || to is not { } b) return false;
+        return a == b ? false
+            : a < b ? now >= a && now < b
+            : now >= a || now < b;
+    }
+
+    /// <summary>Strictly "H:mm" / "HH:mm" (0-23 : 0-59); anything else → null.</summary>
+    private static TimeSpan? ParseClock(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var parts = text.Trim().Split(':');
+        if (parts.Length != 2 ||
+            !int.TryParse(parts[0], out var h) || h is < 0 or > 23 ||
+            !int.TryParse(parts[1], out var m) || m is < 0 or > 59)
+        {
+            return null;
+        }
+        return new TimeSpan(h, m, 0);
     }
 
     private static long? ParseLimit(string? text)
@@ -854,9 +904,25 @@ public sealed class RealDownloadKernel : IDownloadKernel
     private string TargetPath(DownloadTask task)
     {
         var saveTo = task.SavePath;
+        if (string.IsNullOrWhiteSpace(saveTo)) saveTo = DefaultDirectoryFor(task);
         // a target that already looks like a file (extension, not an existing dir) is used as-is
         if (Path.HasExtension(saveTo) && !Directory.Exists(saveTo)) return saveTo;
         return Path.Combine(saveTo, Sanitize(task.Name));
+    }
+
+    /// <summary>
+    /// The settings-driven fallback directory: <see cref="KernelOptions.DefaultSavePath"/>,
+    /// plus one category subfolder when 「分类文件夹」 is on ("D:\Downloads" +
+    /// "video" → "D:\Downloads\video"). An unset DefaultSavePath keeps the
+    /// legacy working-directory behavior (empty string).
+    /// </summary>
+    private string DefaultDirectoryFor(DownloadTask task)
+    {
+        var root = _options.DefaultSavePath;
+        if (string.IsNullOrWhiteSpace(root)) return string.Empty;
+        return _options.FoldersByCategory && task.Category.Length > 0
+            ? Path.Combine(root, Sanitize(task.Category))
+            : root;
     }
 
     private static string Sanitize(string name)

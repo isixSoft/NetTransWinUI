@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using EndToEndTests;
@@ -15,6 +16,8 @@ namespace EndToEndTests;
 ///   5. 服务器不支持 Range：单流宽松回退
 ///   6. 优先级调度：高优先级插队 + 同优先级 FIFO
 ///   7. 模拟内核回归：种子任务 / 命令 / tick
+///   8. 默认保存路径回退：SaveTo 为空 → DefaultSavePath + 分类子目录
+///   9. 夜间不限速：OffPeak 窗口内全局限速被豁免
 /// </summary>
 internal static class Program
 {
@@ -40,6 +43,8 @@ internal static class Program
         await RunAsync("5. 无 Range 服务器：单流宽松回退", () => NoRangeFallbackAsync(server));
         await RunAsync("6. 优先级调度：高优先级插队 + 同优先级 FIFO", () => PrioritySchedulingAsync(server));
         await RunAsync("7. 模拟内核回归：种子 8 任务 / 命令 / tick", () => SimulatedKernelAsync());
+        await RunAsync("8. 默认保存路径回退：SaveTo 空 → DefaultSavePath + 分类子目录", () => DefaultSavePathAsync(server));
+        await RunAsync("9. 夜间不限速：OffPeak 窗口内全局限速豁免", () => NightUncappedAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -305,6 +310,92 @@ internal static class Program
         That(sim.Tasks.Where(t => t.Status != DownloadStatus.Completed).All(t => t.Status == DownloadStatus.Downloading),
             "第二次 ToggleAll 应全部恢复");
         That(sim.Snapshot.IsRunning, "有任务下载时快照 IsRunning 应为 true");
+    }
+
+    // ── 8. 默认保存路径回退 ───────────────────────────────────────────────
+
+    private static async Task DefaultSavePathAsync(TestServer server)
+    {
+        var soft = Payload(512 * 1024, seed: 41);
+        var video = Payload(512 * 1024, seed: 42);
+        server.Map("e2e/default/notes.bin", server.RangeFile(soft, etag: "\"e2e-default-1\""));
+        server.Map("e2e/default/clip.mp4", server.RangeFile(video, etag: "\"e2e-default-2\""));
+
+        // SaveTo 传空：内核必须回退 DefaultSavePath；「分类文件夹」开启时
+        // 再追加分类子目录（.bin → doc，显式 "video" → video）。
+        var root = TempDir("default-root");
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            ConnectionsPerTask = 2,
+            MaxSimultaneous = 2,
+            DefaultSavePath = root,
+            FoldersByCategory = true,
+        });
+
+        var docTask = kernel.Add(new NewDownloadRequest(server.Base + "e2e/default/notes.bin", "", "", 2, TaskPriority.Normal, StartNow: true));
+        var videoTask = kernel.Add(new NewDownloadRequest(server.Base + "e2e/default/clip.mp4", "", "video", 2, TaskPriority.Normal, StartNow: true));
+        await WaitCompletedAsync(kernel, docTask, "默认路径 doc 任务");
+        await WaitCompletedAsync(kernel, videoTask, "默认路径 video 任务");
+
+        That(docTask.Status == DownloadStatus.Completed && videoTask.Status == DownloadStatus.Completed,
+            "两个默认路径任务都应 Completed");
+        var docPath = Path.Combine(root, "doc", "notes.bin");
+        var videoPath = Path.Combine(root, "video", "clip.mp4");
+        That(File.Exists(docPath), "doc 任务应落盘 DefaultSavePath/doc/notes.bin（分类子目录自动创建）");
+        That(File.Exists(videoPath), "显式分类 video 应落盘 DefaultSavePath/video/clip.mp4");
+        That(File.ReadAllBytes(docPath).AsSpan().SequenceEqual(soft), "doc 任务文件字节应精确");
+        That(File.ReadAllBytes(videoPath).AsSpan().SequenceEqual(video), "video 任务文件字节应精确");
+
+        // 关闭分类文件夹：同样的空 SaveTo 应直接落在 DefaultSavePath 根
+        var flatRoot = TempDir("default-flat");
+        using var flatKernel = new RealDownloadKernel(new KernelOptions
+        {
+            ConnectionsPerTask = 2,
+            MaxSimultaneous = 1,
+            DefaultSavePath = flatRoot,
+            FoldersByCategory = false,
+        });
+        var flatTask = flatKernel.Add(new NewDownloadRequest(server.Base + "e2e/default/notes.bin", "", "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitCompletedAsync(flatKernel, flatTask, "默认平铺路径任务");
+        var flatPath = Path.Combine(flatRoot, "notes.bin");
+        That(flatTask.Status == DownloadStatus.Completed && File.Exists(flatPath),
+            "FoldersByCategory=false 时应直接落盘 DefaultSavePath/notes.bin");
+        That(File.ReadAllBytes(flatPath).AsSpan().SequenceEqual(soft), "平铺路径文件字节应精确");
+    }
+
+    // ── 9. 夜间不限速 ─────────────────────────────────────────────────────
+
+    private static async Task NightUncappedAsync(TestServer server)
+    {
+        var data = Payload(1 * MiB, seed: 51);
+        server.Map("e2e/night.bin", server.RangeFile(data, etag: "\"e2e-night-1\""));
+        var dir = TempDir("night");
+
+        // 全局限速 128 KB/s，但夜间豁免窗口覆盖「现在」前后各 1 小时
+        //（跨午夜场景也成立）：1 MiB 若仍被限速需 ~8s，豁免后应在远短于此
+        // 的时间内完成。
+        var options = new KernelOptions
+        {
+            ConnectionsPerTask = 4,
+            MaxSimultaneous = 1,
+            GlobalSpeedLimit = 128 * 1024,
+            UncappedAtNight = true,
+            OffPeakStart = DateTime.Now.AddHours(-1).ToString("HH:mm"),
+            OffPeakEnd = DateTime.Now.AddHours(+1).ToString("HH:mm"),
+        };
+        That(RealDownloadKernel.InOffPeakWindow(DateTime.Now.TimeOfDay, options.OffPeakStart, options.OffPeakEnd),
+            "测试自检：当前时刻应落在动态 OffPeak 窗口内");
+
+        using var kernel = new RealDownloadKernel(options);
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "e2e/night.bin", dir, "soft", 4, TaskPriority.Normal, StartNow: true));
+        var clock = Stopwatch.StartNew();
+        await WaitCompletedAsync(kernel, task, "夜间豁免任务");
+        clock.Stop();
+
+        That(task.Status == DownloadStatus.Completed, "任务状态应为 Completed");
+        That(File.ReadAllBytes(Path.Combine(dir, "night.bin")).AsSpan().SequenceEqual(data), "文件字节应精确");
+        That(clock.Elapsed < TimeSpan.FromSeconds(5),
+            $"夜间窗口内 1 MiB 应远快于 128 KB/s 限速（实际 {clock.Elapsed.TotalSeconds:0.0}s，未豁免需 ≥ 8s）");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

@@ -11,8 +11,8 @@ using NetTrans.Kernel.Transfer;
 namespace NetworkTests;
 
 /// <summary>
-/// NetTrans.Kernel 网络层测试（10 个方向，19 条独立用例）。
-/// 断言全部基于内核源码与 BCL 的真实行为；确认的内核问题以"已知失败"标注，不强行 PASS。
+/// NetTrans.Kernel 网络层测试（16 个方向）。断言全部基于内核源码与 BCL 的真实行为；
+/// 确认的内核问题以"已知失败"标注，不强行 PASS。
 /// （历史注：2b filename 引号转义与 7b HLS 相对变体 URL 曾是已知内核缺陷，均已修复。）
 /// </summary>
 internal static class Program
@@ -52,6 +52,17 @@ internal static class Program
         await RunAsync("8.  SOCKS5：RFC1928 握手 + CONNECT + 可读写流", Socks5RoundtripAsync);
         await RunAsync("9.  Remove 中途取消：TaskRemoved + 文件句柄释放", () => RemoveMidwayAsync(server));
         await RunAsync("10. Redownload：Done 归零重新下载 + 日志\"重新开始\"", () => RedownloadAsync(server));
+        await RunAsync("11. 暂停/恢复边界：探测期暂停 + 反复暂停恢复", () => PauseResumeEdgesAsync(server));
+        await RunAsync("12. AddTask 坏 URL：优雅失败不崩内核", () => BadUrlAsync(server));
+        await RunAsync("13. Remove 竞态风暴：并发 Toggle/Remove/Redownload 不崩", () => RemoveRaceStormAsync(server));
+        await RunAsync("14a. Range 续传：恢复请求应携带中段 Range 头", () => RangeResumeHeaderAsync(server));
+        await RunAsync("14b. Range 背叛：GET 忽略 Range → 明确失败不静默错字节", () => RangeBetrayalAsync(server));
+        await RunAsync("15a. MirrorSourceSet：去重/轮转/失败降级（单元）", MirrorSourceSetUnitAsync);
+        await RunAsync("15b. MirrorSourceSet.ValidateAsync：筛选与取消传播（单元）", MirrorValidateUnitAsync);
+        await RunAsync("15c. SpeedLimiter 分块精度 + 中途改限速（单元）", LimiterAccuracyUnitAsync);
+        await RunAsync("16a. SegmentTable.Split 边界切分（单元）", SegmentSplitUnitAsync);
+        await RunAsync("16b. checkpoint 往返与 Restore 校验（单元）", CheckpointRoundTripUnitAsync);
+        await RunAsync("16c. ChunkedFileWriter 乱序直写 + 并发（单元）", ChunkedWriterUnitAsync);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -540,6 +551,407 @@ internal static class Program
         Equal(Hash(data), Hash(File.ReadAllBytes(path)), "重新下载字节应正确");
         That(Volatile.Read(ref completions) >= 2, "TaskCompleted 应触发两次");
         That(task.Log.Any(l => l.Message.Contains("重新开始")), "日志应出现\"重新开始\"（按新版本重新开始下载）");
+    }
+
+    // ── 11. 暂停/恢复边界 ─────────────────────────────────────────────────
+
+    private static async Task PauseResumeEdgesAsync(TestServer server)
+    {
+        var data = Payload(4 * 1024 * 1024);
+        server.Map("pause/edge.bin", server.RangeFile(data, etag: "\"pause-edge-1\""));
+        var dir = TempDir();
+
+        // 11a：暂停打在探测/启动的任意时刻也要安全——StartNow:true 后立刻暂停，
+        // 此时 worker 可能还在探测，也可能刚开始传。
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 });
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "pause/edge.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        kernel.Toggle(task.Id); // 立刻暂停
+        Equal(DownloadStatus.Paused, task.Status, "启动后立刻暂停：状态应为 Paused");
+        That(task.Speed == 0, "暂停后速度应归零");
+
+        kernel.Toggle(task.Id); // 恢复
+        await WaitAsync(() => task.Status == DownloadStatus.Completed, "探测期暂停过的任务恢复后应完成", 60_000);
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(dir, task))), "探测期暂停/恢复后字节应完整");
+        That(!task.Log.Any(l => l.IsError), $"探测期暂停不应产生失败日志：{string.Join(" | ", task.Log.Where(l => l.IsError).Select(l => l.Message))}");
+        That(!File.Exists(TargetPath(dir, task) + ".nettrans.json"), "完成后 checkpoint 应清除");
+    }
+
+    // ── 12. AddTask 坏 URL ────────────────────────────────────────────────
+
+    private static async Task BadUrlAsync(TestServer server)
+    {
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 4 });
+        var good = Payload(64 * 1024);
+        server.Map("badurl/good.bin", server.RangeFile(good, etag: "\"badurl-good\""));
+        var goodDir = TempDir();
+
+        // 各种坏 URL：任务必须优雅进入 Error（带失败信息），绝不崩内核或挂死
+        foreach (var url in new[] { "not-a-url", "", "http://", "http://nonexistent.invalid/x.bin", "ed2k://|file|name|abc|HASH|/" })
+        {
+            var task = kernel.Add(new NewDownloadRequest(url, TempDir(), "", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status is DownloadStatus.Error or DownloadStatus.Completed,
+                $"坏 URL 「{(url.Length == 0 ? "<空>" : url)}」应到达终态", 30_000);
+            Equal(DownloadStatus.Error, task.Status, $"坏 URL 「{url}」应为 Error");
+            That(!string.IsNullOrWhiteSpace(task.ErrorMessage), $"坏 URL 「{url}」应带错误信息");
+            That(task.Log.Any(l => l.IsError), $"坏 URL 「{url}」日志应有失败行");
+        }
+
+        // 坏 URL 风暴之后内核必须仍然健康：好任务照常完成
+        var healthy = kernel.Add(new NewDownloadRequest(server.Base + "badurl/good.bin", goodDir, "", 1, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => healthy.Status == DownloadStatus.Completed, "坏 URL 之后内核应照常工作", 30_000);
+        Equal(Hash(good), Hash(File.ReadAllBytes(TargetPath(goodDir, healthy))), "好任务字节应完整");
+    }
+
+    // ── 13. Remove 竞态风暴 ───────────────────────────────────────────────
+
+    private static async Task RemoveRaceStormAsync(TestServer server)
+    {
+        var data = Payload(8 * 1024 * 1024);
+        server.Map("race/storm.bin", server.RangeFile(data, etag: "\"race-1\""));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 });
+
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        kernel.SetSpeedLimit(task.Id, "128 KB/s");
+        await WaitAsync(() => task.Done > 0, "竞态前下载应有进度", 15_000);
+
+        // 对同一任务狂轰乱炸：Remove 之后立刻重建，反复制造 Add/Remove/Toggle/Redownload
+        // 的真实重叠窗口——全部操作都在内核锁内，任何一路都不允许抛异常或把内核打挂
+        var storm = Task.Run(() =>
+        {
+            for (int i = 0; i < 60; i++)
+            {
+                if (!kernel.Tasks.Any(t => t.Id == task.Id))
+                {
+                    task = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", TempDir(), "", 2, TaskPriority.Normal, StartNow: true));
+                    kernel.SetSpeedLimit(task.Id, "128 KB/s");
+                    continue;
+                }
+
+                kernel.Remove(new[] { task.Id });          // 幂等：不存在即跳过
+                kernel.Toggle(task.Id);                    // 不存在即跳过
+                if (i % 10 == 0) kernel.Redownload(task.Id);
+                kernel.SetPriority(task.Id, TaskPriority.High);
+                kernel.SetSpeedLimit(task.Id, i % 2 == 0 ? "不限" : "256 KB/s");
+                kernel.MoveToFront(task.Id);
+                kernel.MoveToBack(task.Id);
+            }
+        });
+        kernel.ToggleAll();
+        await storm.WaitAsync(TimeSpan.FromSeconds(60));
+        kernel.Remove(kernel.Tasks.Select(t => t.Id).ToArray()); // 双重清理 + 覆盖未知 id
+
+        That(!kernel.Tasks.Any(t => t.Id == task.Id), "风暴后任务应不在任务列表");
+        await WaitAsync(() => !kernel.Tasks.Any(), "风暴后任务列表应清空", 10_000);
+
+        // 内核必须仍然健康：加一个新任务并完成
+        var healthyDir = TempDir();
+        var healthy = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", healthyDir, "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => healthy.Status == DownloadStatus.Completed, "竞态风暴后内核应照常完成新任务", 90_000);
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(healthyDir, healthy))), "风暴后新任务字节应完整");
+
+        // 从未启动的排队任务：Remove 干净利落、不产生文件
+        var queued = kernel.Add(new NewDownloadRequest(server.Base + "race/storm.bin", TempDir(), "", 2, TaskPriority.Normal, StartNow: false));
+        kernel.Remove(new[] { queued.Id });
+        That(!kernel.Tasks.Any(t => t.Id == queued.Id), "未启动任务应直接移除");
+    }
+
+    // ── 14. Range 续传边界 ────────────────────────────────────────────────
+
+    private static async Task RangeResumeHeaderAsync(TestServer server)
+    {
+        var data = Payload(4 * 1024 * 1024);
+        var rangeHeaders = new List<string>();
+        var gate = new object();
+        server.Map("range/resume.bin", server.RangeFile(data, etag: "\"range-resume-1\"", onGet: (_, ctx) =>
+        {
+            var range = ctx.Request.Headers["Range"];
+            if (range is not null) lock (gate) rangeHeaders.Add(range);
+            return false;
+        }));
+        var dir = TempDir();
+
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 });
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "range/resume.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        kernel.SetSpeedLimit(task.Id, "256 KB/s");
+        await WaitAsync(() => task.Done >= 512 * 1024, "限速下载到 512 KB", 30_000);
+        kernel.Toggle(task.Id); // 暂停 → checkpoint
+        await WaitAsync(() => File.Exists(TargetPath(dir, task) + ".nettrans.json"), "暂停后 checkpoint 应落盘", 15_000);
+
+        kernel.Toggle(task.Id); // 恢复 → 续传 GET 必须带中段 Range
+        await WaitAsync(() => task.Status == DownloadStatus.Completed, "恢复后任务应完成", 60_000);
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(dir, task))), "续传后字节应完整");
+
+        lock (gate)
+        {
+            That(rangeHeaders.Any(h => h.StartsWith("bytes=") && !h.StartsWith("bytes=0-")),
+                $"恢复后应发出非零起点的 Range 续传头，实际捕获：{string.Join(" ; ", rangeHeaders.Take(8))}");
+        }
+    }
+
+    private static async Task RangeBetrayalAsync(TestServer server)
+    {
+        // 探测时宣称支持 Range（HEAD 带 Accept-Ranges），GET 却无视 Range
+        // 回 200 全量：多分段会话必须明确失败（不静默把 200 正文写错位置）
+        var data = Payload(4 * 1024 * 1024);
+        server.Map("range/betray.bin", server.RangeFile(data, etag: "\"betray-1\"", onGet: (_, ctx) =>
+        {
+            if (ctx.Request.Headers["Range"] is null) return false; // 首次 GET 正常放行
+            ctx.Response.StatusCode = 200;                          // 续传 GET：背叛 Range
+            ctx.Response.ContentLength64 = data.Length;
+            ctx.Response.OutputStream.Write(data);
+            ctx.Response.Close();
+            return true;
+        }));
+        var dir = TempDir();
+
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1, RetryCount = 1 });
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "range/betray.bin", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status is DownloadStatus.Error or DownloadStatus.Completed,
+            "Range 背叛任务应到达终态", 60_000);
+        Equal(DownloadStatus.Error, task.Status, "多分段下服务器背叛 Range 应明确 Error");
+        That(task.ErrorMessage!.Contains("断点续传"), $"错误信息应提及断点续传，实际「{task.ErrorMessage}」");
+        That(task.Log.Any(l => l.Message.Contains("服务器不支持断点续传")), "日志应记录「服务器不支持断点续传（Range 被忽略）」");
+    }
+
+    // ── 15. 单元扩容：MirrorSourceSet / SpeedLimiter ──────────────────────
+
+    private static async Task MirrorSourceSetUnitAsync()
+    {
+        // 去重：主源与镜像相同、镜像彼此相同都只保留一份
+        var set = new MirrorSourceSet("p", new[] { "p", "a", "a", "b" });
+        Equal(3, set.Count, "主源 + 去重后的镜像应为 3 个源");
+
+        // 轮转：Next 按 主源→镜像 依次循环
+        var sequence = string.Join(",", Enumerable.Range(0, 6).Select(_ => set.Next()));
+        Equal("p,a,b,p,a,b", sequence, "Next 应按 p→a→b 轮转");
+
+        // 失败降级：报告失败的源移到队尾，仍在轮转中（不删除）
+        set.ReportFailure("p");
+        var after = string.Join(",", Enumerable.Range(0, 3).Select(_ => set.Next()));
+        Equal("a,b,p", after, "ReportFailure 应把失败源移到队尾");
+
+        // 单源集合的失败报告是无操作
+        var single = new MirrorSourceSet("only", null);
+        single.ReportFailure("only");
+        Equal("only", single.Next(), "单源 ReportFailure 后轮转不变");
+
+        await Task.CompletedTask;
+    }
+
+    private static async Task MirrorValidateUnitAsync()
+    {
+        // mock 探测：URL → (size, etag)；"boom" 直接抛异常（坏镜像）
+        var catalogue = new Dictionary<string, (long Size, string? ETag)>
+        {
+            ["ok-1"] = (1000, "e1"),
+            ["ok-2"] = (1000, null),     // 无 etag：身份未知但大小一致 → 保留
+            ["wrong-size"] = (999, "e1"),
+            ["wrong-etag"] = (1000, "e2"),
+        };
+
+        var valid = await MirrorSourceSet.ValidateAsync(
+            new[] { "ok-1", "wrong-size", "ok-2", "wrong-etag", "boom" },
+            size: 1000, etag: "e1", cancellation: default,
+            probe: (url, _) => url == "boom"
+                ? throw new InvalidOperationException("mirror exploded")
+                : Task.FromResult(catalogue.TryGetValue(url, out var hit) ? hit : (0L, (string?)null)));
+
+        Equal(string.Join(",", valid), "ok-1,ok-2", "ValidateAsync 应保留大小一致且 etag 相容的镜像、跳过坏镜像");
+
+        // 外部取消必须传播而不是被吞掉（探测收到的是联动令牌，应随外部取消）
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var cancelled = new CancellationToken[1];
+        await AssertThrowsAsync<OperationCanceledException>(
+            () => MirrorSourceSet.ValidateAsync(new[] { "x" }, 1000, "e1",
+                probe: (_, token) => { cancelled[0] = token; throw new OperationCanceledException(token); },
+                cts.Token),
+            "取消应传播为 OperationCanceledException");
+        That(cancelled[0].IsCancellationRequested, "探测收到的联动令牌应已被外部取消带动");
+
+        // 探测自身超时（6s 上限）：假探测挂起 → 被超时打断 → 镜像被跳过
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var none = await MirrorSourceSet.ValidateAsync(new[] { "slow" }, 1000, "e1",
+            probe: async (_, token) =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), token); // 6s 探测超时将其打断
+                return (0L, (string?)null);
+            },
+            cancellation: default);
+        sw.Stop();
+        Equal(0, none.Count, "挂起的镜像探测应被超时跳过");
+        That(sw.Elapsed < TimeSpan.FromSeconds(10), $"镜像探测超时上限应生效（实际 {sw.Elapsed.TotalSeconds:0.0}s）");
+    }
+
+    private static async Task LimiterAccuracyUnitAsync()
+    {
+        // 分块消费的精度：256 KB/s 下消费 8×32 KB ≈ 1s
+        var limiter = new SpeedLimiter(256 * 1024);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var chunk = new byte[32 * 1024];
+        for (int i = 0; i < 8; i++) await limiter.WaitAsync(chunk.Length);
+        sw.Stop();
+        That(sw.Elapsed.TotalSeconds >= 0.75,
+            $"256 KB/s 下 8×32 KB 应 ≥0.75s（实际 {sw.Elapsed.TotalSeconds:0.00}s）");
+        That(sw.Elapsed.TotalSeconds <= 4.0,
+            $"限速节奏不应异常缓慢（实际 {sw.Elapsed.TotalSeconds:0.00}s）");
+
+        // 中途改限速立即生效：512 KB/s 用 256 KB（~0.5s）→ 降到 64 KB/s 再用 128 KB（~2s）
+        limiter.SetLimit(512 * 1024);
+        for (int i = 0; i < 8; i++) await limiter.WaitAsync(chunk.Length);
+        limiter.SetLimit(64 * 1024);
+        sw.Restart();
+        for (int i = 0; i < 4; i++) await limiter.WaitAsync(chunk.Length);
+        sw.Stop();
+        That(sw.Elapsed.TotalSeconds >= 1.6,
+            $"降到 64 KB/s 后 4×32 KB 应 ≥1.6s（实际 {sw.Elapsed.TotalSeconds:0.00}s）");
+        That(sw.Elapsed.TotalSeconds <= 7.0,
+            $"降速后节奏不应异常缓慢（实际 {sw.Elapsed.TotalSeconds:0.00}s）");
+    }
+
+    private static async Task AssertThrowsAsync<TException>(Func<Task> body, string what) where TException : Exception
+    {
+        try
+        {
+            await body();
+        }
+        catch (TException)
+        {
+            return;
+        }
+        catch (Exception error)
+        {
+            throw new Exception($"{what}：抛出了 {error.GetType().Name}（{error.Message}）而非 {typeof(TException).Name}");
+        }
+        throw new Exception($"{what}：未抛出 {typeof(TException).Name}");
+    }
+
+    // ── 16. 单元扩容：SegmentTable / checkpoint / ChunkedFileWriter ───────
+
+    private static Task SegmentSplitUnitAsync()
+    {
+        const long MiB = 1024 * 1024;
+
+        // 大小未知（内核探测失败时传 -1）→ 单个流式分段，永不算完成
+        var stream = SegmentTable.Split("u", -1, null, 8);
+        Equal(1, stream.Segments.Length, "未知大小应只有 1 个流式分段");
+        Equal(long.MaxValue, stream.Segments[0].End, "流式分段 End 应为 long.MaxValue");
+        That(!stream.Segments[0].IsComplete, "流式分段不应算完成");
+        Equal(-1L, stream.Size, "未知大小时 Size=-1");
+
+        // 过切分 ×4 + 1 MiB 下限：3 MiB / 8 连接 → 3 段各 1 MiB（下限生效）
+        var floored = SegmentTable.Split("f", 3 * MiB, "e", 8);
+        Equal(3, floored.Segments.Length, "3 MiB @ 8 连接应受 1 MiB 下限切成 3 段");
+        for (int i = 0; i < floored.Segments.Length; i++)
+            Equal((i * MiB, (i + 1) * MiB), (floored.Segments[i].Start, floored.Segments[i].End),
+                $"下限分段 {i} 应恰好是第 {i} 个 1 MiB");
+
+        // 过切分：10 MiB / 2 连接 → 8 段，总长守恒
+        var over = SegmentTable.Split("o", 10 * MiB, null, 2);
+        Equal(8, over.Segments.Length, "10 MiB @ 2 连接应过切分为 8 段");
+        Equal(10 * MiB, over.Segments.Sum(s => s.End - s.Start), "过切分后总长应守恒");
+        That(over.Segments.All(s => s.End - s.Start >= MiB), "过切分段不得低于 1 MiB 下限");
+
+        // 不整除：5 MiB+1 / 1 连接 → 4 段，前 extra 段多 1 字节，接缝连续
+        var uneven = SegmentTable.Split("n", 5 * MiB + 1, null, 1);
+        Equal(4, uneven.Segments.Length, "5 MiB+1 @ 1 连接应切成 4 段");
+        for (int i = 1; i < uneven.Segments.Length; i++)
+            Equal(uneven.Segments[i - 1].End, uneven.Segments[i].Start, $"第 {i} 段起点应紧接上一段终点");
+        Equal(5 * MiB + 1, uneven.Segments[^1].End, "末段终点应等于总大小");
+
+        // connections 钳制：0 与 64 之外不存在；64 也封顶 64 段
+        Equal(4, SegmentTable.Split("c", 64 * MiB, null, 0).Segments.Length, "connections=0 钳制为 1 → 4 段（×4 过切分）");
+        Equal(64, SegmentTable.Split("c", 64 * MiB, null, 100).Segments.Length, "connections=100 钳制为 64 → 封顶 64 段");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task CheckpointRoundTripUnitAsync()
+    {
+        const long MiB = 1024 * 1024;
+
+        // 往返：Split → 部分完成 → ToCheckpoint → Restore，字段与进度不丢
+        var table = SegmentTable.Split("rt", 8 * MiB, "etag-1", 4);
+        table.Segments[0].Done = table.Segments[0].End - table.Segments[0].Start; // 第 1 段完成
+        table.Segments[1].Done = 123456;
+        var checkpoint = table.ToCheckpoint();
+        Equal("ranges", checkpoint.Kind, "checkpoint Kind 应为 ranges");
+
+        var restored = SegmentTable.Restore(checkpoint);
+        That(restored is not null, "合法 checkpoint 应可 Restore");
+        Equal(table.Size, restored!.Size, "往返后 Size 应不变");
+        Equal(table.ETag, restored.ETag, "往返后 ETag 应不变");
+        Equal("rt", restored.Url, "往返后 Url 应不变");
+        Equal(table.Segments.Length, restored.Segments.Length, "往返后分段数应不变");
+        for (int i = 0; i < table.Segments.Length; i++)
+        {
+            Equal(table.Segments[i].Start, restored.Segments[i].Start, $"段 {i} Start 往返");
+            Equal(table.Segments[i].End, restored.Segments[i].End, $"段 {i} End 往返");
+            Equal(table.Segments[i].Done, restored.Segments[i].Done, $"段 {i} Done 往返");
+        }
+        Equal(table.DoneBytes, restored.DoneBytes, "往返后 DoneBytes 应不变");
+
+        // 校验拒绝：Kind 错 / 空数组 / 长度不齐 → null（上层会静默重下）
+        That(SegmentTable.Restore(new TransferCheckpoint { Kind = "segments", Start = [0], End = [1], Done = [0] }) is null,
+            "Kind=segments 的 checkpoint 不应被 Restore 为 ranges 表");
+        That(SegmentTable.Restore(new TransferCheckpoint { Kind = "ranges", Start = [], End = [], Done = [] }) is null,
+            "空数组 checkpoint 应拒绝");
+        That(SegmentTable.Restore(new TransferCheckpoint { Kind = "ranges", Start = [0, 1], End = [1], Done = [0, 0] }) is null,
+            "数组长度不齐应拒绝");
+
+        // Done 越界 clamp：负数 → 0，超过段长 → 段长
+        var clamped = SegmentTable.Restore(new TransferCheckpoint
+        {
+            Kind = "ranges", Url = "u", Size = 2 * MiB,
+            Start = [0, MiB], End = [MiB, 2 * MiB], Done = [-5, 2 * MiB],
+        });
+        That(clamped is not null, "越界 checkpoint 仍应可 Restore");
+        Equal(0L, clamped!.Segments[0].Done, "负 Done 应 clamp 为 0");
+        Equal(MiB, clamped.Segments[1].Done, "超段长 Done 应 clamp 为段长");
+        That(clamped.Segments[1].IsComplete, "clamp 到段长后该段应视为完成");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ChunkedWriterUnitAsync()
+    {
+        const long MiB = 1024 * 1024;
+        var path = Path.Combine(TempDir(), "chunked.bin");
+
+        // 预分配：writer 一建好文件就是全尺寸，未写区域读出 0
+        using (var writer = new ChunkedFileWriter(path, 4 * MiB))
+            writer.Write(2 * MiB, new byte[] { 1, 2, 3, 4 }, 4);
+        Equal(4 * MiB, new FileInfo(path).Length, "预分配应立即把文件设为全尺寸");
+        var onDisk = File.ReadAllBytes(path);
+        That(onDisk.AsSpan(0, (int)(2 * MiB)).ToArray().All(b => b == 0), "未写前半应是 0 填充");
+        That(onDisk.AsSpan((int)(2 * MiB), 4).ToArray().SequenceEqual(new byte[] { 1, 2, 3, 4 }),
+            "乱序直写应精确落在指定偏移");
+        That(onDisk.AsSpan((int)(2 * MiB) + 4).ToArray().All(b => b == 0), "写入点之后应仍是 0 填充");
+
+        // 多线程乱序并发直写：8 个连接各写自己的 1 MiB 条带，字节精确拼装
+        var strip = Payload((int)MiB);
+        var concurrent = Path.Combine(TempDir(), "chunked-concurrent.bin");
+        using (var writer = new ChunkedFileWriter(concurrent, 8 * MiB))
+        {
+            var lanes = Enumerable.Range(0, 8).Select(i => Task.Run(() =>
+            {
+                var buffer = new byte[64 * 1024];
+                long at = i * MiB;
+                for (int copied = 0; copied < MiB; copied += buffer.Length)
+                {
+                    Array.Copy(strip, copied, buffer, 0, buffer.Length);
+                    writer.Write(at + copied, buffer, buffer.Length);
+                }
+            })).ToArray();
+            Task.WaitAll(lanes.ToArray(), TimeSpan.FromSeconds(30));
+            writer.Flush();
+        }
+        var assembled = File.ReadAllBytes(concurrent);
+        Equal(8 * MiB, assembled.Length, "并发直写后文件长度应正确");
+        That(assembled.SequenceEqual(Enumerable.Range(0, 8).SelectMany(_ => strip)), "8 条带乱序并发写入后应字节精确复原");
+
+        return Task.CompletedTask;
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

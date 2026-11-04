@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 故障注入模糊测试工程：net8.0 控制台，零 NuGet 依赖，
+       通过 RealDownloadKernel + 本地 TestServer 注入断连/截断/虚假长度/慢响应/5xx/损坏 checkpoint，
+       数百轮带种子验证内核的容错与字节精确性。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>FuzzTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>FuzzTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -25,6 +25,13 @@ public static class KernelOptionsFactory
         {
             MaxSimultaneous = Math.Max(1, settings.MaxSimultaneousDownloads),
             GlobalSpeedLimit = ParseSpeedLimit(settings.GlobalSpeedLimit),
+            DefaultSavePath = string.IsNullOrWhiteSpace(settings.DefaultSavePath)
+                ? null
+                : settings.DefaultSavePath.Trim(),
+            FoldersByCategory = settings.FoldersByCategory,
+            UncappedAtNight = settings.UncappedAtNight,
+            OffPeakStart = settings.OffPeakStart,
+            OffPeakEnd = settings.OffPeakEnd,
         };
         options.RetryCount = ParseLeadingInt(settings.RetryPolicy, options.RetryCount);
         return options;

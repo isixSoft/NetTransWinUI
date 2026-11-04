@@ -28,6 +28,9 @@ internal static class Program
         Run("6.  MaxSimultaneous 钳制（下限 1）", MaxSimultaneousClamp);
         Run("7.  JsonSettingsStore 往返 + 工厂映射", SettingsStoreRoundTrip);
         Run("8.  shell 专属字段不泄漏进内核选项", ShellFieldsNotMapped);
+        Run("9.  保存路径 + 分类文件夹映射", SavePathMapping);
+        Run("10. 夜间不限速设置映射", NightLimitMapping);
+        Run("11. OffPeak 窗口判断（跨午夜/边界/垃圾）", OffPeakWindowLogic);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -132,8 +135,9 @@ internal static class Program
 
     private static void ShellFieldsNotMapped()
     {
-        // 设置页里的 shell 专属字段（主题/老板键/岛屿显隐/排序/下载路径等）
-        // 不应有任何内核对应物；改遍它们，内核其余默认值必须纹丝不动。
+        // 设置页里真正的 shell 专属字段（主题/老板键/岛屿显隐/排序等）不应有
+        // 任何内核对应物；改遍它们，内核其余默认值必须纹丝不动。
+        // （DefaultSavePath / OffPeak 窗口自阶段 4 起已映射进内核，见测试 9/10。）
         var settings = new AppSettings
         {
             Theme = "dark",
@@ -143,10 +147,7 @@ internal static class Program
             DenseRows = true,
             SortKey = "size",
             SortDirection = "desc",
-            DefaultSavePath = @"E:\Somewhere",
             WatchClipboard = false,
-            OffPeakStart = "01:00",
-            OffPeakEnd = "05:00",
             WhenAllComplete = "关机",
         };
         var options = KernelOptionsFactory.Create(settings);
@@ -157,6 +158,85 @@ internal static class Program
         That(options.DefaultHeaders.Count == 0, "DefaultHeaders 保持为空");
         That(options.MirrorResolver is null, "MirrorResolver 保持 null");
         That(options.HttpHandlerFactory is null, "HttpHandlerFactory 保持 null");
+    }
+
+    // ── 9. 保存路径 + 分类文件夹映射 ──────────────────────────────────────
+
+    private static void SavePathMapping()
+    {
+        var settings = new AppSettings { DefaultSavePath = @"D:\Downloads", FoldersByCategory = true };
+        var options = KernelOptionsFactory.Create(settings);
+        Equal(@"D:\Downloads", options.DefaultSavePath, "DefaultSavePath 原样映射进内核");
+        That(options.FoldersByCategory, "FoldersByCategory=true → 内核开启分类子目录");
+
+        settings.FoldersByCategory = false;
+        That(!KernelOptionsFactory.Create(settings).FoldersByCategory, "FoldersByCategory=false → 内核关闭分类子目录");
+
+        // 空白路径 → null（内核保留旧行为：写进程工作目录）；带空白 → Trim
+        Equal((string?)null, KernelOptionsFactory.Create(new AppSettings { DefaultSavePath = "" }).DefaultSavePath,
+            "空字符串 DefaultSavePath → null");
+        Equal((string?)null, KernelOptionsFactory.Create(new AppSettings { DefaultSavePath = "   " }).DefaultSavePath,
+            "纯空白 DefaultSavePath → null");
+        Equal(@"E:\DL", KernelOptionsFactory.Create(new AppSettings { DefaultSavePath = " E:\\DL " }).DefaultSavePath,
+            "带空白的 DefaultSavePath → Trim 后映射");
+    }
+
+    // ── 10. 夜间不限速设置映射 ────────────────────────────────────────────
+
+    private static void NightLimitMapping()
+    {
+        var settings = new AppSettings { UncappedAtNight = true, OffPeakStart = "23:30", OffPeakEnd = "06:15" };
+        var options = KernelOptionsFactory.Create(settings);
+        That(options.UncappedAtNight, "UncappedAtNight=true → 内核开启夜间豁免");
+        Equal("23:30", options.OffPeakStart, "OffPeakStart 原样传递（解析留在内核侧）");
+        Equal("06:15", options.OffPeakEnd, "OffPeakEnd 原样传递");
+
+        settings.UncappedAtNight = false;
+        That(!KernelOptionsFactory.Create(settings).UncappedAtNight, "UncappedAtNight=false → 内核关闭夜间豁免");
+
+        // 默认 AppSettings：豁免默认关、窗口默认 23:00–07:00
+        var defaults = KernelOptionsFactory.Create(new AppSettings());
+        That(!defaults.UncappedAtNight, "默认 UncappedAtNight=false");
+        Equal("23:00", defaults.OffPeakStart, "默认 OffPeakStart=23:00");
+        Equal("07:00", defaults.OffPeakEnd, "默认 OffPeakEnd=07:00");
+    }
+
+    // ── 11. OffPeak 窗口判断 ──────────────────────────────────────────────
+
+    private static void OffPeakWindowLogic()
+    {
+        // 跨午夜窗口 23:00→07:00：午夜两侧都算「夜间」
+        That(RealDownloadKernel.InOffPeakWindow(At("23:00"), "23:00", "07:00"),
+            "跨午夜窗口：23:00 起点闭区间 → 窗口内");
+        That(RealDownloadKernel.InOffPeakWindow(At("23:30"), "23:00", "07:00"), "跨午夜窗口：23:30 → 窗口内");
+        That(RealDownloadKernel.InOffPeakWindow(At("00:00"), "23:00", "07:00"), "跨午夜窗口：午夜 00:00 → 窗口内");
+        That(RealDownloadKernel.InOffPeakWindow(At("06:59"), "23:00", "07:00"), "跨午夜窗口：06:59 → 窗口内");
+        That(!RealDownloadKernel.InOffPeakWindow(At("07:00"), "23:00", "07:00"), "跨午夜窗口：07:00 终点开区间 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("12:00"), "23:00", "07:00"), "跨午夜窗口：正午 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("22:59"), "23:00", "07:00"), "跨午夜窗口：22:59 → 窗口外");
+
+        // 正向窗口 01:00→05:00
+        That(RealDownloadKernel.InOffPeakWindow(At("02:00"), "01:00", "05:00"), "正向窗口：02:00 → 窗口内");
+        That(RealDownloadKernel.InOffPeakWindow(At("04:59"), "01:00", "05:00"), "正向窗口：04:59 → 窗口内");
+        That(!RealDownloadKernel.InOffPeakWindow(At("05:00"), "01:00", "05:00"), "正向窗口：05:00 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("00:59"), "01:00", "05:00"), "正向窗口：00:59 → 窗口外");
+
+        // 单位数小时："7:00" 合法
+        That(RealDownloadKernel.InOffPeakWindow(At("06:30"), "23:00", "7:00"), "单位数小时 \"7:00\" 可解析");
+
+        // 零长窗口与垃圾文本一律「无豁免」
+        That(!RealDownloadKernel.InOffPeakWindow(At("08:00"), "08:00", "08:00"), "零长窗口 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("03:00"), "25:00", "07:00"), "小时越界 25:00 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("03:00"), "23:00", "07:60"), "分钟越界 07:60 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("03:00"), "abc", "07:00"), "垃圾起点 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("03:00"), "23:00", null), "null 终点 → 窗口外");
+        That(!RealDownloadKernel.InOffPeakWindow(At("03:00"), " ", "07:00"), "空白起点 → 窗口外");
+    }
+
+    private static TimeSpan At(string hhmm)
+    {
+        var parts = hhmm.Split(':');
+        return new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), 0);
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

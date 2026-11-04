@@ -3,10 +3,11 @@ using System.Diagnostics;
 namespace NetTrans.Kernel.Transfer;
 
 /// <summary>
-/// Token-bucket speed cap, one per task (the effective cap already folds in
-/// the global limit — the kernel recomputes it whenever either changes).
-/// Waits are sliced into short delays so a live SetLimit takes effect fast.
-/// A null/zero cap means unlimited and never delays.
+/// Token-bucket speed cap, one per task. The global cap lives in a
+/// kernel-wide shared limiter (see <see cref="TransferRequest.GlobalLimiter"/>)
+/// so N concurrent tasks together stay under the global value; waits chain
+/// global-then-task. Waits are sliced into short delays so a live SetLimit
+/// takes effect fast. A null/zero cap means unlimited and never delays.
 /// </summary>
 public sealed class SpeedLimiter
 {

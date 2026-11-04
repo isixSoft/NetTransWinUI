@@ -50,6 +50,33 @@ public sealed class KernelOptions
     /// </summary>
     public Func<HttpMessageHandler>? HttpHandlerFactory { get; set; }
 
+    /// <summary>
+    /// Default save directory for tasks that carry no explicit target
+    /// (the 新建下载 sheet's 「保存到」 left empty). Null/empty keeps the
+    /// legacy behavior of writing into the process working directory.
+    /// </summary>
+    public string? DefaultSavePath { get; set; }
+
+    /// <summary>
+    /// When falling back to <see cref="DefaultSavePath"/>, append one
+    /// subfolder per category (video/music/doc/soft/bt) — the 设置 sheet's
+    /// 「分类文件夹」 toggle.
+    /// </summary>
+    public bool FoldersByCategory { get; set; }
+
+    /// <summary>
+    /// 「夜间不限速」：while the wall clock is inside the off-peak window
+    /// (<see cref="OffPeakStart"/>…<see cref="OffPeakEnd"/>) the global speed
+    /// cap is lifted; per-task limits still apply.
+    /// </summary>
+    public bool UncappedAtNight { get; set; }
+
+    /// <summary>Off-peak window start, "HH:mm" (e.g. "23:00"); may cross midnight.</summary>
+    public string OffPeakStart { get; set; } = "23:00";
+
+    /// <summary>Off-peak window end, "HH:mm" (e.g. "07:00").</summary>
+    public string OffPeakEnd { get; set; } = "07:00";
+
     /// <summary>Checkpoints (断点续传) are written next to the target file with this suffix.</summary>
     public string CheckpointSuffix { get; set; } = ".nettrans.json";
 

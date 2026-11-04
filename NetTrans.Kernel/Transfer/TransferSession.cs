@@ -29,6 +29,13 @@ public sealed class TransferRequest
     public required HttpClient Http { get; init; }
     public required SpeedLimiter Limiter { get; init; }
 
+    /// <summary>
+    /// Kernel-wide shared token bucket enforcing the global speed cap across
+    /// ALL tasks combined (N tasks together stay under the global value);
+    /// waits are chained global-then-task. Null/zero = no global cap.
+    /// </summary>
+    public SpeedLimiter? GlobalLimiter { get; init; }
+
     /// <summary>ETag from the fresh probe — identity input for the resume check.</summary>
     public string? ETag { get; init; }
 
@@ -77,6 +84,15 @@ public sealed class TransferSession
 {
     private const int ChunkSize = 64 * 1024;
     private const long MaxSegmentBuffer = 256 * 1024 * 1024;
+
+    /// <summary>
+    /// Serializes checkpoint writes against the completion path: once the
+    /// transfer settles, <see cref="_checkpointClosed"/> flips under this gate
+    /// so an in-flight 2s timer callback can never resurrect a stale
+    /// checkpoint after the kernel has deleted it.
+    /// </summary>
+    private readonly object _checkpointGate = new();
+    private bool _checkpointClosed;
 
     private const int ModeIdle = 0;
     private const int ModeRanges = 1;
@@ -294,7 +310,7 @@ public sealed class TransferSession
         return await RunWorkersAsync(
             writer, cancellation,
             onPaused: () => SaveRangeCheckpoint(table),
-            body: (slot, token) => RangeWorkerAsync(slot, writer, sources, token));
+            body: (slot, token) => RangeWorkerAsync(slot, writer, sources, token, plan.AcceptRanges));
     }
 
     /// <summary>Restore the checkpoint when it matches the fresh probe; split fresh otherwise.</summary>
@@ -359,14 +375,19 @@ public sealed class TransferSession
             long[] snapshot;
             lock (buffersGate) snapshot = committed.ToArray();
             if (snapshot.Length == 0) return;
-            _request.CheckpointChanged.Invoke(new TransferCheckpoint
+            lock (_checkpointGate)
             {
-                Kind = "segments",
-                Url = _files.FirstOrDefault() ?? "",
-                ETag = _request.ETag,
-                Committed = snapshot,
-                Fingerprint = _fingerprint,
-            });
+                if (_checkpointClosed) return;
+                if (plan.TotalSize is { } total && snapshot.Sum() >= total) return; // 完成在即：不写陈旧断点
+                _request.CheckpointChanged.Invoke(new TransferCheckpoint
+                {
+                    Kind = "segments",
+                    Url = _files.FirstOrDefault() ?? "",
+                    ETag = _request.ETag,
+                    Committed = snapshot,
+                    Fingerprint = _fingerprint,
+                });
+            }
         }
 
         using var checkpointTimer = new Timer(
@@ -432,7 +453,7 @@ public sealed class TransferSession
                 while ((n = await stream.ReadAsync(chunk, cancellation)) > 0)
                 {
                     if (buffer.Length + n > MaxSegmentBuffer) throw new IOException("HLS/DASH 分段超出内存缓冲限制");
-                    await _request.Limiter.WaitAsync(n, cancellation);
+                    await ThrottleAsync(n, cancellation);
                     buffer.Write(chunk, 0, n);
                     SpeedTick(slot, n);
                 }
@@ -482,7 +503,7 @@ public sealed class TransferSession
                 int n;
                 while ((n = await source.ReadAsync(buffer, cancellation)) > 0)
                 {
-                    await _request.Limiter.WaitAsync(n, cancellation);
+                    await ThrottleAsync(n, cancellation);
                     writer.Write(written, buffer, n);
                     written += n;
                     Interlocked.Exchange(ref _done, written);
@@ -575,6 +596,12 @@ public sealed class TransferSession
                 : error;
             return new TransferOutcome(TransferOutcomeKind.Failed, Brief(failure.Message));
         }
+        finally
+        {
+            // 传输已定型（完成/暂停/失败）：关闭在途 checkpoint 写入，避免
+            // 2s 定时器回调在内核 DeleteCheckpoint 之后又落一份陈旧断点
+            lock (_checkpointGate) _checkpointClosed = true;
+        }
 
         if (_mode == ModeRanges && _pieces.Any(p => !p.IsComplete))
             return new TransferOutcome(TransferOutcomeKind.Failed, "传输提前结束");
@@ -586,7 +613,7 @@ public sealed class TransferSession
         return new TransferOutcome(TransferOutcomeKind.Completed, null);
     }
 
-    private async Task RangeWorkerAsync(int slot, ChunkedFileWriter writer, MirrorSourceSet? sources, CancellationToken cancellation)
+    private async Task RangeWorkerAsync(int slot, ChunkedFileWriter writer, MirrorSourceSet? sources, CancellationToken cancellation, bool acceptRanges)
     {
         var pieces = _pieces;
         var buffer = new byte[ChunkSize];
@@ -610,7 +637,9 @@ public sealed class TransferSession
                     using var message = BuildMessage(HttpMethod.Get, source);
                     if (piece.End != long.MaxValue)
                     {
-                        if (piece.Start + piece.Done > 0)
+                        // 有界分段始终请求自己的区间（探测时确认支持 Range，或
+                        // 已有进度要续传），否则首片会被 200 全量正文撑到 2x 带宽
+                        if (acceptRanges || piece.Start + piece.Done > 0)
                             message.Headers.Range = new RangeHeaderValue(piece.Start + piece.Done, piece.End - 1);
                     }
                     else if (piece.Done > 0)
@@ -642,11 +671,18 @@ public sealed class TransferSession
                     int n;
                     while ((n = await stream.ReadAsync(buffer, cancellation)) > 0)
                     {
-                        await _request.Limiter.WaitAsync(n, cancellation);
-                        writer.Write(piece.Start + piece.Done, buffer, n);
-                        piece.Done += n;
-                        Interlocked.Add(ref _done, n);
-                        SpeedTick(slot, n);
+                        // 只消费本分段还需要的字节：服务器无视 Range 回 200 全量
+                        // 时，读满分段立刻断开，绝不吃下整个正文
+                        int take = piece.End == long.MaxValue
+                            ? n
+                            : (int)Math.Min(n, piece.End - piece.Start - piece.Done);
+                        if (take <= 0) break;
+                        await ThrottleAsync(take, cancellation);
+                        writer.Write(piece.Start + piece.Done, buffer, take);
+                        piece.Done += take;
+                        Interlocked.Add(ref _done, take);
+                        SpeedTick(slot, take);
+                        if (piece.End != long.MaxValue && piece.Done >= piece.End - piece.Start) break;
                     }
 
                     if (piece.IsComplete) break;
@@ -666,8 +702,23 @@ public sealed class TransferSession
     private void SaveRangeCheckpoint(SegmentTable table)
     {
         if (_request.CheckpointChanged is null || table.Size <= 0) return;
-        if (table.DoneBytes == 0 && !table.Restored) return;
-        _request.CheckpointChanged.Invoke(table.ToCheckpoint());
+        lock (_checkpointGate)
+        {
+            if (_checkpointClosed) return;
+            if (table.DoneBytes == 0 && !table.Restored) return;
+            if (table.DoneBytes >= table.Size) return; // 完成在即：不写陈旧断点
+            _request.CheckpointChanged.Invoke(table.ToCheckpoint());
+        }
+    }
+
+    /// <summary>
+    /// Paces one read: first the shared global bucket (all tasks combined stay
+    /// under the global cap), then the per-task bucket.
+    /// </summary>
+    private async Task ThrottleAsync(int bytes, CancellationToken cancellation)
+    {
+        if (_request.GlobalLimiter is { } global) await global.WaitAsync(bytes, cancellation);
+        await _request.Limiter.WaitAsync(bytes, cancellation);
     }
 
     /// <summary>Stable identity of a playlist's segment order, so a changed manifest invalidates resume state.</summary>
