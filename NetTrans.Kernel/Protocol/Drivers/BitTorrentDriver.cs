@@ -53,7 +53,47 @@ public sealed class BitTorrentDriver : IProtocolDriver
             name, size ?? -1, AcceptRanges: false, ETag: null, FinalUrl: url,
             DownloadProtocol.BitTorrent,
             new TransferPlan.ExternalEngine("BitTorrent / libtorrent",
-                $"种子元数据已解析（{trackers} 个 tracker），数据面需外部 BT 引擎"));
+                $"种子元数据已解析（{trackers} 个 tracker），数据面需外部 BT 引擎"),
+            Trackers: TrackerList(torrent));
+    }
+
+    /// <summary>magnet 的 tr= tracker 列表，逐个脱敏后去重。</summary>
+    private static IReadOnlyList<string>? MagnetTrackers(string url)
+    {
+        var query = url[(url.IndexOf('?') + 1)..];
+        var trackers = new List<string>();
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (parts.Length != 2 || !parts[0].Equals("tr", StringComparison.OrdinalIgnoreCase)) continue;
+            var announce = Uri.UnescapeDataString(parts[1]);
+            var masked = SensitiveUrls.Mask(announce);
+            if (masked.Length > 0 && !trackers.Contains(masked)) trackers.Add(masked);
+        }
+        return trackers.Count > 0 ? trackers : null;
+    }
+
+    /// <summary>.torrent 的 announce + announce-list，逐个脱敏后去重。</summary>
+    private static IReadOnlyList<string>? TrackerList(Dictionary<string, object?>? torrent)
+    {
+        if (torrent is null) return null;
+        var trackers = new List<string>();
+
+        void Add(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            var masked = SensitiveUrls.Mask(raw);
+            if (!trackers.Contains(masked)) trackers.Add(masked);
+        }
+
+        if (torrent.GetValueOrDefault("announce-list") is List<object?> groups)
+        {
+            foreach (var group in groups.OfType<List<object?>>())
+                foreach (var item in group)
+                    Add(Bencode.Text(item));
+        }
+        Add(Bencode.Text(torrent.GetValueOrDefault("announce")));
+        return trackers.Count > 0 ? trackers : null;
     }
 
     private static ResourceProbe ProbeMagnet(string url, DriverContext context)
@@ -61,7 +101,6 @@ public sealed class BitTorrentDriver : IProtocolDriver
         string? hash = null;
         string? name = null;
         long size = -1;
-        int trackers = 0;
 
         var query = url[(url.IndexOf('?') + 1)..];
         foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
@@ -82,20 +121,19 @@ public sealed class BitTorrentDriver : IProtocolDriver
                 case "xl":
                     _ = long.TryParse(value, out size);
                     break;
-                case "tr":
-                    trackers++;
-                    break;
             }
         }
 
         hash ??= "unknown";
         name ??= $"bt-{hash[..Math.Min(8, hash.Length)]}";
-        context.Log?.Invoke($"magnet：infohash {hash} · {trackers} 个 tracker");
+        var trackerList = MagnetTrackers(url);
+        context.Log?.Invoke($"magnet：infohash {hash} · {trackerList?.Count ?? 0} 个 tracker");
         return new ResourceProbe(
             name, size, AcceptRanges: false, ETag: null, FinalUrl: url,
             DownloadProtocol.BitTorrent,
             new TransferPlan.ExternalEngine("BitTorrent / libtorrent",
-                $"infohash {hash} · {trackers} 个 tracker · DHT/PEX 数据面需外部 BT 引擎"));
+                $"infohash {hash} · {trackerList?.Count ?? 0} 个 tracker · DHT/PEX 数据面需外部 BT 引擎"),
+            Trackers: trackerList);
     }
 
     private static int TrackerCount(Dictionary<string, object?>? torrent)

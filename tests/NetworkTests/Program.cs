@@ -66,6 +66,9 @@ internal static class Program
         await RunAsync("17a. Checksums：算法识别 + 校验清单解析（单元）", ChecksumsUnitAsync);
         await RunAsync("17b. 期望哈希校验：MD5/SHA-256 匹配与不匹配", () => ExpectedHashAsync(server));
         await RunAsync("17c. 本地签名库：历史指纹记录/一致/变化 + 持久化", () => HashDatabaseAsync(server));
+        await RunAsync("18a. SensitiveUrls：passkey/token 脱敏（单元）", SensitiveUrlsUnitAsync);
+        await RunAsync("18b. PT magnet：展示脱敏 + tracker 列表 + 原始 URL 保留", () => PtMagnetAsync(server));
+        await RunAsync("18c. PT 种子：tracker 脱敏 + 做种占位符渲染", () => PtTorrentSeedAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -1091,6 +1094,115 @@ internal static class Program
             That(task.Log.Any(l => l.Message.Contains("已记录签名")), "损坏库应降级重建（重新记录签名）");
             That(!File.ReadAllText(dbPath).StartsWith("{这不是 JSON"), "损坏库应被重建为合法 JSON");
         }
+    }
+
+    // ── 18. PT 支持（脱敏 / tracker / 做种参数） ──────────────────────────
+
+    private static async Task SensitiveUrlsUnitAsync()
+    {
+        Equal("http://pt.site/download?id=1&passkey=***&uid=***&name=big.iso",
+            SensitiveUrls.Mask("http://pt.site/download?id=1&passkey=SECRET&uid=42&name=big.iso"),
+            "http 查询串敏感参数遮蔽、普通参数保留");
+        Equal("http://pt.site/dl?PassKey=X&TOKEN=Y&authkeyid=9".Replace("X", "***").Replace("Y", "***").Replace("9", "***"),
+            SensitiveUrls.Mask("http://pt.site/dl?PassKey=X&TOKEN=Y&authkeyid=9"),
+            "参数名大小写不敏感");
+        Equal("http://pt.site/file.iso", SensitiveUrls.Mask("http://pt.site/file.iso"), "无查询串原样返回");
+
+        // magnet：tr= 是 announce URL，解码后双层遮蔽，展示可读
+        var magnet = "magnet:?xt=urn:btih:0123456789abcdef&dn=big.iso" +
+                     "&tr=https%3a%2f%2fpt.site%2fannounce%3fpasskey%3dTOPSECRET" +
+                     "&tr=udp%3a%2f%2ftracker.public%3a1337%2fannounce";
+        var masked = SensitiveUrls.Mask(magnet);
+        That(masked.StartsWith("magnet:?"), "magnet 头保留");
+        That(!masked.Contains("TOPSECRET"), "嵌套 passkey 必须遮蔽");
+        That(masked.Contains("passkey=***"), "遮蔽后的 announce 可读");
+        That(masked.Contains("udp://tracker.public:1337/announce"), "公开 tracker 解码展示");
+
+        Equal("", SensitiveUrls.Mask(null), "null → 空串");
+        Equal("", SensitiveUrls.Mask("  "), "空白 → 空串");
+        await Task.CompletedTask;
+    }
+
+    private static async Task PtMagnetAsync(TestServer server)
+    {
+        const string secret = "TOPSECRET-passkey";
+        var magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=pt.show.iso" +
+                     $"&tr=https%3a%2f%2fpt.example%2fannounce%3fpasskey%3d{Uri.EscapeDataString(secret)}" +
+                     "&tr=udp%3a%2f%2ftracker.public%3a1337%2fannounce";
+
+        // 未接引擎插槽：BT 任务走 Failed → Error，但脱敏/tracker 字段必须就位
+        using var kernel = new RealDownloadKernel(new KernelOptions { MaxSimultaneous = 1 });
+        var task = kernel.Add(new NewDownloadRequest(magnet, TempDir(), "bt", 1, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status == DownloadStatus.Error, "未接引擎的 magnet 任务应失败", 30_000);
+
+        Equal(magnet, task.Url, "原始 magnet（含 passkey）必须原样保留给引擎下发");
+        That(task.DisplayUrl is not null && task.DisplayUrl.Contains("***") && !task.DisplayUrl.Contains(secret),
+            $"展示链接必须脱敏（实际「{task.DisplayUrl}」）");
+        That(task.Trackers is { Count: 2 }, $"tracker 列表应 2 条（实际 {task.Trackers?.Count ?? 0}）");
+        That(task.Trackers![0].Contains("***") && !task.Trackers[0].Contains(secret), "私有 tracker 应脱敏");
+        Equal("udp://tracker.public:1337/announce", task.Trackers![1], "公开 tracker 原样");
+        Equal("pt.show.iso", task.Name, "dn= 应成为任务名");
+    }
+
+    private static async Task PtTorrentSeedAsync(TestServer server)
+    {
+        // 本地 .torrent（announce-list 两级 tracker）→ tracker 脱敏
+        var torrentPath = Path.Combine(TempDir(), "pt.torrent");
+        File.WriteAllBytes(torrentPath, BuildTorrent(
+            "https://pt.example/announce?authkey=ABCDEF0123456789", "udp://tracker.public:1337/announce"));
+
+        using (var kernel = new RealDownloadKernel(new KernelOptions { MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(torrentPath, TempDir(), "bt", 1, TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Error, "未接引擎的种子任务应失败", 30_000);
+            That(task.Trackers is { Count: 2 }, $"种子 tracker 应 2 条（实际 {task.Trackers?.Count ?? 0}）");
+            That(task.Trackers![0].Contains("authkey=***") && !task.Trackers[0].Contains("ABCDEF"),
+                $"种子内 authkey 应脱敏（实际「{task.Trackers[0]}」）");
+            Equal("udp://tracker.public:1337/announce", task.Trackers![1], "announce-list 第二条原样");
+            Equal("pt.torrent.iso", task.Name, "info.name 应成为任务名");
+        }
+
+        // 做种占位符：{seed-ratio} {seed-time} 由任务参数渲染；
+        // PT 底线：{url} 把真实 passkey 交给引擎（数据面），但日志必须脱敏（展示面）
+        const string secret = "TOPSECRET-passkey";
+        var magnet = "magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98&dn=seed.iso" +
+                     $"&tr=https%3a%2f%2fpt.example%2fannounce%3fpasskey%3d{Uri.EscapeDataString(secret)}";
+        var saveDir = TempDir();
+        var outPath = Path.Combine(saveDir, "seed.iso");
+        using (var kernel = new RealDownloadKernel(new KernelOptions
+               {
+                   MaxSimultaneous = 1,
+                   ExternalEngineCommand = "printf '%s' '{url}' > '{path}'",
+               }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(magnet, saveDir, "bt", 1, TaskPriority.Normal,
+                StartNow: true, SeedRatio: 1.5, SeedHours: 48));
+            await WaitAsync(() => task.Status is DownloadStatus.Completed or DownloadStatus.Error,
+                "引擎命令任务应有终态", 30_000);
+            Equal(DownloadStatus.Completed, task.Status, $"引擎命令成功应完成（实际 {task.Status}：{task.ErrorMessage}）");
+            var handed = File.ReadAllText(outPath);
+            That(handed.Contains("urn:btih:fedcba98") && handed.Contains(secret),
+                "引擎（{url}）必须拿到含真实 passkey 的完整 magnet");
+            var cmdLog = task.Log.FirstOrDefault(l => l.Message.Contains("执行外部命令")).Message;
+            That(cmdLog.Contains("***") && !cmdLog.Contains(secret), $"命令日志必须脱敏（实际「{cmdLog}」）");
+        }
+    }
+
+    /// <summary>手工 bencode 一个最小种子：announce + announce-list + info{name,length}。</summary>
+    private static byte[] BuildTorrent(string announce, string announce2)
+    {
+        static byte[] S(string text) => Encoding.ASCII.GetBytes($"{text.Length}:{text}");
+        using var ms = new MemoryStream();
+        void W(ReadOnlySpan<byte> bytes) => ms.Write(bytes);
+        W("d"u8);
+        W(S("announce")); W(S(announce));
+        W(S("announce-list")); W("ll"u8); W(S(announce)); W("e"u8); W("l"u8); W(S(announce2)); W("ee"u8);
+        W(S("info")); W("d"u8);
+        W(S("length")); W("i1024e"u8);
+        W(S("name")); W(S("pt.torrent.iso"));
+        W("e"u8);
+        W("e"u8);
+        return ms.ToArray();
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

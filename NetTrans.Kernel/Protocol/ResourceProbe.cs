@@ -13,6 +13,7 @@ namespace NetTrans.Kernel.Protocol;
 /// <param name="Plan">How to transfer it.</param>
 /// <param name="SuggestedProtocol">Set when the content itself says it is another protocol
 /// (a body sniffed as m3u8/mpd) so the registry can hand the probe to that driver.</param>
+/// <param name="Trackers">BT/PT tracker 展示列表（已过 SensitiveUrls.Mask 脱敏），非 BT 为 null。</param>
 public sealed record ResourceProbe(
     string Name,
     long Size,
@@ -21,4 +22,5 @@ public sealed record ResourceProbe(
     string FinalUrl,
     DownloadProtocol Protocol,
     TransferPlan Plan,
-    DownloadProtocol? SuggestedProtocol = null);
+    DownloadProtocol? SuggestedProtocol = null,
+    IReadOnlyList<string>? Trackers = null);

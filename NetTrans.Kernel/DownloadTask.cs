@@ -51,6 +51,18 @@ public sealed class DownloadTask
     /// <summary>期望指纹（十六进制，算法按长度判别）；null = 未要求校验。</summary>
     public string? ExpectedHash { get; set; }
 
+    /// <summary>PT 做种目标分享率；null = 未指定。</summary>
+    public double? SeedRatio { get; set; }
+
+    /// <summary>PT 做种目标小时数；null = 未指定。</summary>
+    public int? SeedHours { get; set; }
+
+    /// <summary>BT/PT tracker 展示列表（已脱敏）；非 BT 任务为 null。inspector 显示用。</summary>
+    public IReadOnlyList<string>? Trackers { get; set; }
+
+    /// <summary>脱敏后的展示链接（magnet/ed2k/torrent）；普通 HTTP 任务为 null，展示层回退 Url。</summary>
+    public string? DisplayUrl { get; set; }
+
     /// <summary>BT-only fields; null on plain HTTP tasks, which switches the inspector's row from 节点/种子 to 校验.</summary>
     public int? Peers { get; set; }
     public int? Seeds { get; set; }

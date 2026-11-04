@@ -71,6 +71,10 @@ public sealed class TransferRequest
     public string? TaskUrl { get; init; }
     public string? TaskName { get; init; }
 
+    /// <summary>PT 做种目标：分享率 / 小时数，null = 未指定；供模板 {seed-ratio} {seed-time} 使用。</summary>
+    public double? SeedRatio { get; init; }
+    public int? SeedHours { get; init; }
+
     public LogSink? Log { get; init; }
 }
 
@@ -171,19 +175,26 @@ public sealed class TransferSession
     /// <summary>
     /// The deliberate engine slot: moving bytes for BT / eD2k needs a
     /// host-side engine, injected either as a runner delegate or as a shell
-    /// command template ({url} {path} {name}). Success means the engine
-    /// produced the file at the save path — reported exactly like a finished
+    /// command template ({url} {path} {name} {seed-ratio} {seed-time}). Success means
+    /// the engine produced the file at the save path — reported exactly like a finished
     /// byte transfer; with neither slot configured the plan still fails honestly.
     /// </summary>
     private async Task<TransferOutcome> RunExternalEngineAsync(TransferPlan.ExternalEngine plan, CancellationToken cancellation)
     {
         Log($"外部引擎接管：{plan.Engine}");
 
+        // PT 做种目标：任务参数优先，种子/驱动默认值兜底
+        var seededPlan = plan with
+        {
+            SeedRatio = _request.SeedRatio ?? plan.SeedRatio,
+            SeedHours = _request.SeedHours ?? plan.SeedHours,
+        };
+
         if (_request.EngineRunner is { } runner)
         {
             try
             {
-                bool produced = await runner(plan, _request.SavePath, cancellation);
+                bool produced = await runner(seededPlan, _request.SavePath, cancellation);
                 if (produced && File.Exists(_request.SavePath)) return EngineFileOutcome();
                 Log(produced ? "外部引擎报告完成，但未产出文件" : "外部引擎运行失败", isError: true);
                 return new TransferOutcome(TransferOutcomeKind.Failed,
@@ -200,16 +211,22 @@ public sealed class TransferSession
             }
         }
 
-        return await RunExternalEngineCommandAsync(cancellation);
+        return await RunExternalEngineCommandAsync(seededPlan, cancellation);
     }
 
-    private async Task<TransferOutcome> RunExternalEngineCommandAsync(CancellationToken cancellation)
+    private async Task<TransferOutcome> RunExternalEngineCommandAsync(
+        TransferPlan.ExternalEngine plan, CancellationToken cancellation)
     {
+        // PT 做种占位符：{seed-ratio} 分享率、{seed-time} 小时数；
+        // 未设置时替换为 0（aria2 语义：不限做种），模板自行决定是否携带。
         string command = (_request.ExternalEngineCommand ?? string.Empty)
             .Replace("{url}", _request.TaskUrl ?? string.Empty)
             .Replace("{path}", _request.SavePath)
-            .Replace("{name}", _request.TaskName ?? string.Empty);
-        Log($"执行外部命令：{command}");
+            .Replace("{name}", _request.TaskName ?? string.Empty)
+            .Replace("{seed-ratio}", (plan.SeedRatio ?? 0).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("{seed-time}", (plan.SeedHours ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // PT 底线：magnet/tracker 里的 passkey 不进日志
+        Log($"执行外部命令：{SensitiveUrls.Mask(command)}");
 
         var start = new ProcessStartInfo
         {

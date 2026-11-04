@@ -571,6 +571,11 @@ public sealed class RealDownloadKernel : IDownloadKernel
                 task.Host = host;
                 changed = true;
             }
+            if (probe.Trackers is { Count: > 0 } && task.Trackers is null)
+            {
+                task.Trackers = probe.Trackers;
+                changed = true;
+            }
             if (task.Connections == 0)
             {
                 task.Connections = _options.ConnectionsPerTask;
@@ -606,6 +611,8 @@ public sealed class RealDownloadKernel : IDownloadKernel
             ExternalEngineCommand = _options.ExternalEngineCommand,
             TaskUrl = task.Url,
             TaskName = task.Name,
+            SeedRatio = task.SeedRatio,
+            SeedHours = task.SeedHours,
         });
     }
 
@@ -1007,6 +1014,10 @@ public sealed class RealDownloadKernel : IDownloadKernel
             Status = request.StartNow ? DownloadStatus.Queued : DownloadStatus.Paused,
             AddedAt = "今天 " + DateTime.Now.ToString("HH:mm"),
             ExpectedHash = string.IsNullOrWhiteSpace(request.ExpectedHash) ? null : request.ExpectedHash.Trim(),
+            SeedRatio = request.SeedRatio,
+            SeedHours = request.SeedHours,
+            // PT 底线：magnet/ed2k/torrent 链接在展示层先脱敏，原始 URL 只留给引擎
+            DisplayUrl = NeedsMasking(request.Url) ? Protocol.SensitiveUrls.Mask(request.Url) : null,
         };
     }
 
@@ -1017,6 +1028,12 @@ public sealed class RealDownloadKernel : IDownloadKernel
         FileKind.Doc => "doc",
         _ => "soft",
     };
+
+    /// <summary>magnet / ed2k / torrent 链接展示前必须脱敏。</summary>
+    private static bool NeedsMasking(string url) =>
+        url.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("ed2k:", StringComparison.OrdinalIgnoreCase) ||
+        url.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase);
 
     private static double[] Push(double[] history, double value, int cap)
     {
