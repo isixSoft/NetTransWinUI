@@ -228,6 +228,11 @@ public sealed class TransferSession
         // PT 底线：magnet/tracker 里的 passkey 不进日志
         Log($"执行外部命令：{SensitiveUrls.Mask(command)}");
 
+        // 引擎输出目录必须先存在（HTTP/FTP 驱动自写文件时会建目录，
+        // 引擎接管时内核是唯一能保证目录就位的一方）
+        var outputDir = Path.GetDirectoryName(_request.SavePath);
+        if (outputDir is { Length: > 0 }) Directory.CreateDirectory(outputDir);
+
         var start = new ProcessStartInfo
         {
             FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",

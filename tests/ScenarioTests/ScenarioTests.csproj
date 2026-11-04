@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 场景化测试工程：net8.0 控制台，零 NuGet 依赖。
+       不测单点机制，而是把真实用户的使用流程串起来：
+       调度/优先级/分类落盘/签名库、断网重试续传、PT 引擎下发、
+       跨任务共享限速、坏文件处置、进程重启恢复。
+       复用 EndToEndTests 的 TestServer（Compile Include，零拷贝）。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ScenarioTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ScenarioTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+    <Compile Include="../EndToEndTests/TestServer.cs" />
+  </ItemGroup>
+
+</Project>
