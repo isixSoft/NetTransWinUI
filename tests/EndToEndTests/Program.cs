@@ -19,7 +19,7 @@ namespace EndToEndTests;
 ///   8. 默认保存路径回退：SaveTo 为空 → DefaultSavePath + 分类子目录
 ///   9. 夜间不限速：OffPeak 窗口内全局限速被豁免
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private const int MiB = 1024 * 1024;
 
@@ -418,11 +418,6 @@ internal static class Program
             Console.WriteLine($"[FAIL] {name}");
             Console.WriteLine($"       {error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
     }
 
     /// <summary>Deterministic payload; different seeds produce different bytes.</summary>

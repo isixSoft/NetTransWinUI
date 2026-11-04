@@ -10,7 +10,7 @@ namespace ExternalEngineTests;
 /// 失败通路与未配置时的原样错误文案。
 /// 断言全部基于内核真实行为；Windows 下 shell 类用例跳过（沙箱为 Linux，正常执行）。
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private const string Magnet = "magnet:?xt=urn:btih:0123456789abcdef";
     private const string MagnetName = "bt-01234567";
@@ -305,17 +305,6 @@ internal static class Program
             Console.WriteLine($"[FAIL] {name}（{sw.Elapsed.TotalSeconds:0.0}s）");
             Console.WriteLine($"       {error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
-    }
-
-    private static void Equal<T>(T expected, T actual, string what)
-    {
-        if (!EqualityComparer<T>.Default.Equals(expected, actual))
-            throw new Exception($"{what}：期望 [{expected}]，实际 [{actual}]");
     }
 
     private static byte[] Payload(int size)

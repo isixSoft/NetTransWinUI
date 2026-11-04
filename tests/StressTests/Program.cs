@@ -30,7 +30,7 @@ namespace StressTests;
 ///      （RealDownloadKernel._globalLimiter → TransferRequest.GlobalLimiter → TransferSession.ThrottleAsync），
 ///      N 任务合计不超过全局值（组 B 断言「合计 ≈ 全局 ±25%」）。
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private const int MiB = 1024 * 1024;
 
@@ -398,11 +398,6 @@ internal static class Program
             Console.WriteLine($"[FAIL] {name}");
             Console.WriteLine($"       {error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
     }
 
     /// <summary>

@@ -15,7 +15,7 @@ namespace NetworkTests;
 /// 确认的内核问题以"已知失败"标注，不强行 PASS。
 /// （历史注：2b filename 引号转义与 7b HLS 相对变体 URL 曾是已知内核缺陷，均已修复。）
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private static readonly HttpClient ProbeHttp = new();
     private static readonly ProtocolDriverRegistry Registry = new(new KernelOptions(), ProbeHttp);
@@ -1310,17 +1310,6 @@ internal static class Program
                 Console.WriteLine($"       {error.Message}");
             }
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
-    }
-
-    private static void Equal<T>(T expected, T actual, string what)
-    {
-        if (!EqualityComparer<T>.Default.Equals(expected, actual))
-            throw new Exception($"{what}：期望 [{expected}]，实际 [{actual}]");
     }
 
     private static T AssertPlan<T>(ResourceProbe probe, string what) where T : TransferPlan

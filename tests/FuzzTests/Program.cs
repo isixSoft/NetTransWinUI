@@ -15,7 +15,7 @@ namespace FuzzTests;
 ///   4. 随机种子压轴：不可预测种子混合上述故障 100 轮，失败轮打印种子；同种子重跑必须结果一致
 /// 合法终态：Completed（文件必须与源站字节精确）或 Error（重试耗尽）；全程绝不崩溃、绝不挂死。
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private const int KiB = 1024;
     private const int MiB = 1024 * KiB;
@@ -584,11 +584,6 @@ internal static class Program
             Console.WriteLine($"[FAIL] {name}");
             Console.WriteLine($"       {error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
     }
 
     private static void AssertNoUnhandled(string label)

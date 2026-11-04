@@ -8,7 +8,7 @@ namespace ProxyTests;
 /// string parsing (ProxyInfo.Parse) tests. Hand-rolled TcpListener mocks, zero
 /// NuGet dependencies, same assertion style as NetworkTests.
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private static int _passed, _failed;
     private static readonly List<string> _failures = new();
@@ -230,17 +230,6 @@ internal static class Program
             _failures.Add($"{title}: {error.Message}");
             Console.WriteLine($"失败：{error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
-    }
-
-    private static void Equal<T>(T expected, T actual, string what)
-    {
-        if (!EqualityComparer<T>.Default.Equals(expected, actual))
-            throw new Exception($"{what}：期望 [{expected}]，实际 [{actual}]");
     }
 
     private static async Task<Exception> ThrowsAsync(Func<Task> action)

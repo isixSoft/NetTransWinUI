@@ -11,7 +11,7 @@ namespace FtpE2ETests;
 ///   4. SOCKS5 匿名代理：无 userinfo 问候（NO-AUTH）+ 字节精确中继
 ///   5. SOCKS5 错误密码：代理拒绝认证 → 任务 Error 且不挂死
 /// </summary>
-internal static class Program
+internal sealed class Program : TestKit
 {
     private const int MiB = 1024 * 1024;
 
@@ -211,11 +211,6 @@ internal static class Program
             Console.WriteLine($"[FAIL] {name}");
             Console.WriteLine($"       {error.Message}");
         }
-    }
-
-    private static void That(bool condition, string what)
-    {
-        if (!condition) throw new Exception(what);
     }
 
     private static string Describe(Socks5TestProxy.AuthRecord[] records) =>

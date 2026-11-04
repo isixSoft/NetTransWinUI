@@ -16,4 +16,8 @@
     <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../TestKit/TestKit.cs" />
+  </ItemGroup>
+
 </Project>
