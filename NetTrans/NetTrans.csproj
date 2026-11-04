@@ -11,6 +11,8 @@
     <UseWinUI>true</UseWinUI>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- NativeMethods uses [LibraryImport], whose source-generated stubs are unsafe. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <!-- Unpackaged (no MSIX) desktop app. Flip WindowsPackageType to "MSIX" and
          add a Package.appxmanifest if you'd rather ship through MSIX/Store. -->

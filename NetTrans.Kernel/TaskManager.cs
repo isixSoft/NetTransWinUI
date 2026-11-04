@@ -14,7 +14,7 @@ namespace NetTrans.Kernel;
 /// DownloadTask, how to refresh one, and which wrapped tasks are running.
 /// </summary>
 /// <typeparam name="TItem">The host's per-task view wrapper (e.g. a view model).</typeparam>
-public sealed class TaskManager<TItem>
+public class TaskManager<TItem>
     where TItem : class
 {
     private readonly IDownloadKernel _kernel;
