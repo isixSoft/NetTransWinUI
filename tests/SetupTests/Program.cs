@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Xml.Linq;
 using NetTrans.Kernel;
 using NetTrans.Models;
 using NetTrans.Services;
@@ -39,6 +41,9 @@ internal static class Program
         Run("17. Mark-of-the-Web 开关映射：MarkOfTheWeb → 内核", MarkOfTheWebMapping);
         Run("18. 哈希展示比对：三算法已知向量/长度识别算法/清洗匹配/两值展示/非法输入 null", HashCompareContract);
         Run("19. 启动恢复档位：非默认档位下发/全速·空·未知档位不动内核", SpeedProfileRestoreContract);
+        Run("20. 多语言 resw：en 与 zh-CN 键集合一致（P2-9）", L10nParity);
+        Run("21. 多语言 resw：7 个工具栏 tooltip 键 + 设置页文案键齐全且值非空（P2-9）", L10nRequiredKeys);
+        Run("22. Language 设置：默认 auto + 往返持久化（P2-9）", LanguageFieldContract);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -149,6 +154,7 @@ internal static class Program
         var settings = new AppSettings
         {
             Theme = "dark",
+            Language = "en",
             BossKey = "Ctrl + Shift + Z",
             ShowIsland = false,
             ShowInspector = false,
@@ -496,6 +502,133 @@ internal static class Program
         {
             File.Delete(file);
         }
+    }
+
+    // ── 20/21/22. 多语言资源（P2-9） ──────────────────────────────────────
+
+    /// <summary>主界面七图标工具栏里 4 个静态 tooltip（x:Uid 直取 resw）。</summary>
+    private static readonly string[] L10nToolbarKeys =
+    {
+        "ToolbarAdd.TooltipService.ToolTip",
+        "ToolbarOpenFolder.TooltipService.ToolTip",
+        "ToolbarSniff.TooltipService.ToolTip",
+        "ToolbarSettings.TooltipService.ToolTip",
+    };
+
+    /// <summary>动态 3 个 tooltip 由 ShellViewModel 经 L10n 取这两组键。</summary>
+    private static readonly string[] L10nTooltipKeys =
+    {
+        "TooltipToggleAllStart",
+        "TooltipToggleAllPause",
+        "TooltipRemove",
+        "TooltipRemoveCount",
+        "TooltipInspectorOpen",
+        "TooltipInspectorClose",
+    };
+
+    /// <summary>设置页纯展示文案（标题/分组/行标签/占位符/说明/按钮）。</summary>
+    private static readonly string[] L10nSettingsKeys =
+    {
+        "SettingsSheet.Title",
+        "SettingsSheet.RightLabel",
+        "SettingsGroupDownload.Text",
+        "SettingsGroupQueue.Text",
+        "SettingsGroupBehavior.Text",
+        "SettingsRowSavePath.Label",
+        "SettingsRowFolders.Label",
+        "SettingsRowNameTemplate.Label",
+        "SettingsNameTemplate.PlaceholderText",
+        "SettingsRowConcurrency.Label",
+        "SettingsRowGlobalLimit.Label",
+        "SettingsRowProfile.Label",
+        "SettingsRowNight.Label",
+        "SettingsRowSchedule.Label",
+        "SettingsRowRetry.Label",
+        "SettingsRowAfter.Label",
+        "SettingsRowLanguage.Label",
+        "SettingsNoteLanguage.Text",
+        "SettingsRowClipboard.Label",
+        "SettingsRowNotify.Label",
+        "SettingsRowMotw.Label",
+        "SettingsRowVerify.Label",
+        "SettingsRowScan.Label",
+        "SettingsRowEdge.Label",
+        "SettingsRowIsland.Label",
+        "SettingsRowBossKey.Label",
+        "SettingsNoteBossKey.Text",
+        "SettingsNotePortable.Text",
+        "SettingsOptimize.Content",
+    };
+
+    private static string[] AllL10nKeys =>
+        L10nToolbarKeys.Concat(L10nTooltipKeys).Concat(L10nSettingsKeys).ToArray();
+
+    /// <summary>resw 即普通 XML，LINQ to XML 直解析——测试工程保持零 NuGet。</summary>
+    private static Dictionary<string, string> LoadResw(string lang)
+    {
+        var root = FindRepoRoot()
+            ?? throw new InvalidOperationException("沿 BaseDirectory 上溯找不到仓库根（NetTrans/NetTrans.csproj）");
+        var file = Path.Combine(root.FullName, "NetTrans", "Strings", lang, "Resources.resw");
+        That(File.Exists(file), $"{lang} Resources.resw 应存在：{file}");
+        var doc = XDocument.Load(file);
+        return doc.Root!.Elements("data")
+            .ToDictionary(e => e.Attribute("name")!.Value, e => e.Element("value")?.Value ?? "");
+    }
+
+    private static DirectoryInfo? FindRepoRoot()
+    {
+        // Binaries may live outside the repo (--artifacts-path /tmp/...), so the
+        // seed path is baked in at build time via AssemblyMetadata("RepoRoot").
+        var seed = Assembly.GetEntryAssembly()?.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "RepoRoot")?.Value;
+        if (seed is null) return null;
+        var dir = new DirectoryInfo(seed);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "NetTrans", "NetTrans.csproj"))) return dir;
+            dir = dir.Parent;
+        }
+        return null;
+    }
+
+    private static void L10nParity()
+    {
+        var en = LoadResw("en");
+        var zh = LoadResw("zh-CN");
+        var missingInZh = en.Keys.Except(zh.Keys).ToList();
+        var missingInEn = zh.Keys.Except(en.Keys).ToList();
+        Equal(0, missingInZh.Count, $"zh-CN 相对 en 缺少的键：{string.Join(", ", missingInZh)}");
+        Equal(0, missingInEn.Count, $"en 相对 zh-CN 缺少的键：{string.Join(", ", missingInEn)}");
+    }
+
+    private static void L10nRequiredKeys()
+    {
+        var en = LoadResw("en");
+        var zh = LoadResw("zh-CN");
+        foreach (var key in AllL10nKeys)
+        {
+            That(en.TryGetValue(key, out var enVal) && enVal.Trim().Length > 0, $"en 应含非空键 {key}");
+            That(zh.TryGetValue(key, out var zhVal) && zhVal.Trim().Length > 0, $"zh-CN 应含非空键 {key}");
+        }
+
+        // 计数 tooltip 的占位符契约：两语言都必须带 {0}
+        if (en.TryGetValue("TooltipRemoveCount", out var enCount) && zh.TryGetValue("TooltipRemoveCount", out var zhCount))
+        {
+            That(enCount.Contains("{0}"), $"en TooltipRemoveCount 应含 {{0}} 占位符，实际 [{enCount}]");
+            That(zhCount.Contains("{0}"), $"zh-CN TooltipRemoveCount 应含 {{0}} 占位符，实际 [{zhCount}]");
+        }
+    }
+
+    private static void LanguageFieldContract()
+    {
+        Equal("auto", new AppSettings().Language, "默认语言 auto（跟随系统）");
+
+        ISettingsStore store = new JsonSettingsStore();
+        store.Save(new AppSettings { Language = "zh-CN" });
+        Equal("zh-CN", store.Load().Language, "Language 应随设置持久化");
+
+        store.Save(new AppSettings { Language = "en" });
+        Equal("en", store.Load().Language, "Language 往返 en");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

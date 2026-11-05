@@ -52,4 +52,8 @@ public sealed class AppSettings
     public string SortKey { get; set; } = "added";
     public string SortDirection { get; set; } = "asc";
     public string Theme { get; set; } = "auto"; // light | dark | auto
+
+    /// <summary>P2-9 多语言：auto | en | zh-CN；启动时设 PrimaryLanguageOverride，
+    /// 切换生效时机与 shell 约定一致 = 下次启动。shell 专属，不映射进内核。</summary>
+    public string Language { get; set; } = "auto";
 }

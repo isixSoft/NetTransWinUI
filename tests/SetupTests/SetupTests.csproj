@@ -28,4 +28,14 @@
     <Compile Include="../../NetTrans/Models/SpeedProfile.cs" Link="Linked/SpeedProfile.cs" />
   </ItemGroup>
 
+  <!-- The P2-9 resw contract tests read the app's real Strings/**/Resources.resw;
+       bake the test project's path into the assembly so the tests find the repo
+       no matter where --artifacts-path puts the binaries. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepoRoot</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>
