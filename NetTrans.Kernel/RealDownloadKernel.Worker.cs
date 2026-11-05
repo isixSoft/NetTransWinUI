@@ -186,6 +186,7 @@ public sealed partial class RealDownloadKernel
         {
             await VerifyChecksumAsync(task, runtime);
             TaskCompleted?.Invoke(task);
+            CompletionNotifications.Emit(_options, task);
             await RunCompletionActionsAsync(task, runtime);
         }
 

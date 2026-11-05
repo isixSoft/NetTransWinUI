@@ -32,6 +32,8 @@ internal static class Program
         Run("10. 夜间不限速设置映射", NightLimitMapping);
         Run("11. OffPeak 窗口判断（跨午夜/边界/垃圾）", OffPeakWindowLogic);
         Run("12. 本地签名库路径映射", HashDatabaseMapping);
+        Run("13. 系统通知：开关开→sink 收到标题/正文；关→不发；null/异常不崩", NotificationContract);
+        Run("14. 系统通知开关映射：NotifyOnCompletion → NotifyOnComplete", NotifyOnCompleteMapping);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -256,6 +258,61 @@ internal static class Program
         Equal(Path.Combine("D:\\Downloads", ".nettrans-checksums.json"),
             KernelOptionsFactory.Create(new AppSettings()).HashDatabasePath,
             "默认设置下签名库应跟随默认下载目录");
+    }
+
+    // ── 13/14. 系统通知服务契约（P1-4：接口 + 设置开关；AppNotification 接线归 UI 侧）──
+
+    private sealed class RecordingSink : INotificationSink
+    {
+        public List<(string Title, string Body)> Calls { get; } = new();
+        public bool Throw { get; set; }
+
+        public void Notify(string title, string body)
+        {
+            if (Throw) throw new InvalidOperationException("sink 故意抛异常");
+            Calls.Add((title, body));
+        }
+    }
+
+    private static DownloadTask NewTask(string name) => new()
+    {
+        Id = 1,
+        Name = name,
+        Host = "example.org",
+        Kind = FileKind.Zip,
+        Size = 100,
+        Category = "soft",
+    };
+
+    private static void NotificationContract()
+    {
+        var sink = new RecordingSink();
+        var options = new KernelOptions { NotificationSink = sink, NotifyOnComplete = true };
+        CompletionNotifications.Emit(options, NewTask("setup.exe"));
+        Equal(1, sink.Calls.Count, "开关开 + sink → 恰一次通知");
+        Equal("下载完成", sink.Calls[0].Title, "通知标题");
+        That(sink.Calls[0].Body.Contains("setup.exe"), "正文应包含任务名");
+
+        options = new KernelOptions { NotificationSink = sink, NotifyOnComplete = false };
+        CompletionNotifications.Emit(options, NewTask("setup.exe"));
+        Equal(1, sink.Calls.Count, "开关关 → 不发通知");
+
+        // sink 未注入（headless 默认）与 sink 抛异常都不得影响内核
+        CompletionNotifications.Emit(new KernelOptions { NotifyOnComplete = true }, NewTask("x.iso"));
+        That(true, "sink null → 不崩");
+        var throwing = new RecordingSink { Throw = true };
+        CompletionNotifications.Emit(
+            new KernelOptions { NotificationSink = throwing, NotifyOnComplete = true }, NewTask("x.iso"));
+        That(true, "sink 抛异常 → 吞掉不崩");
+    }
+
+    private static void NotifyOnCompleteMapping()
+    {
+        That(KernelOptionsFactory.Create(new AppSettings()).NotifyOnComplete, "默认设置 → 通知开");
+        That(!KernelOptionsFactory.Create(new AppSettings { NotifyOnCompletion = false }).NotifyOnComplete,
+            "NotifyOnCompletion=false → 内核通知关");
+        That(KernelOptionsFactory.Create(new AppSettings { NotifyOnCompletion = true }).NotifyOnComplete,
+            "NotifyOnCompletion=true → 内核通知开");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

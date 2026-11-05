@@ -30,6 +30,7 @@ public static class KernelOptionsFactory
                 : settings.DefaultSavePath.Trim(),
             FoldersByCategory = settings.FoldersByCategory,
             UncappedAtNight = settings.UncappedAtNight,
+            NotifyOnComplete = settings.NotifyOnCompletion,
             OffPeakStart = settings.OffPeakStart,
             OffPeakEnd = settings.OffPeakEnd,
             // 本地签名库跟着下载根目录走（.nettrans-checksums.json）；

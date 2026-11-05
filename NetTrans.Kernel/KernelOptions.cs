@@ -105,6 +105,15 @@ public sealed class KernelOptions
     public Func<string, long>? FreeSpaceProbe { get; set; }
 
     /// <summary>
+    /// 系统通知槽位（P1-4）：任务完成时接收通知；null = 无通知（headless 默认）。
+    /// UI 侧把 AppNotification 实现接到这里。
+    /// </summary>
+    public INotificationSink? NotificationSink { get; set; }
+
+    /// <summary>任务完成系统通知开关（P1-4）；AppSettings.NotifyOnCompletion 映射。</summary>
+    public bool NotifyOnComplete { get; set; } = true;
+
+    /// <summary>
     /// External-engine slot for the BT / eD2k data plane: when a probe resolves
     /// to an <see cref="TransferPlan.ExternalEngine"/> plan, this runner is
     /// invoked with the plan, the resolved save path and a cancellation token.
