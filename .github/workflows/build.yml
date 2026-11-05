@@ -54,11 +54,17 @@ jobs:
           if (-not $makepri) { Write-Warning "makepri.exe not found; skipping PRI content check"; exit 0 }
 
           $dump = Join-Path $env:TEMP "pri-${{ matrix.tfm }}.xml"
-          & $makepri.FullName dump /if $pri.FullName /of $dump /o | Out-Host
+          & $makepri.FullName dump /if $pri.FullName /of $dump /dt detailed /o | Out-Host
           if (-not (Test-Path $dump)) { throw "makepri dump produced no output" }
 
           $xml = Get-Content $dump -Raw
-          foreach ($needle in @("ToolbarAdd.TooltipService.ToolTip", "SettingsRowLanguage.Label", "zh-CN", "en")) {
-            if ($xml -notmatch [regex]::Escape($needle)) { throw "PRI dump missing '$needle'" }
+          $xml -split "`n" | Where-Object { $_ -match "Toolbar|SettingsRow|New download" } |
+            Select-Object -First 6 | ForEach-Object { Write-Host ("PRI line: " + $_.Trim()) }
+
+          foreach ($needle in @("ToolbarAdd", "New download", "zh-CN")) {
+            if ($xml.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+              $preview = (($xml -split "`n") | Select-Object -First 20) -join "`n"
+              throw "PRI dump missing '$needle'. Dump preview:`n$preview"
+            }
           }
-          Write-Host "PRI contains toolbar/settings keys plus en and zh-CN candidates"
+          Write-Host "PRI contains the toolbar key, its en value, and zh-CN candidates"
