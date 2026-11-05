@@ -37,6 +37,7 @@ internal static class Program
         Run("15. 限速档位：默认档位/Resolve/Switch 即时下发/未知档位不动内核/往返持久化", SpeedProfilesContract);
         Run("16. 文件名模板：占位符渲染/非法字符/未知占位符/空模板回退/工厂映射", FileNameTemplateContract);
         Run("17. Mark-of-the-Web 开关映射：MarkOfTheWeb → 内核", MarkOfTheWebMapping);
+        Run("18. 哈希展示比对：三算法已知向量/长度识别算法/清洗匹配/两值展示/非法输入 null", HashCompareContract);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -417,6 +418,51 @@ internal static class Program
             "MarkOfTheWeb=false → 内核来源标记关");
         That(KernelOptionsFactory.Create(new AppSettings { MarkOfTheWeb = true }).MarkOfTheWeb,
             "MarkOfTheWeb=true → 内核来源标记开");
+    }
+
+    // ── 18. 哈希展示与手动比对（P2-7） ────────────────────────────────────
+
+    private static void HashCompareContract()
+    {
+        // 已知向量（NIST："abc"）
+        var file = Path.Combine(Path.GetTempPath(), "hash-vec-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(file, "abc");
+        try
+        {
+            var (md5, sha1, sha256) = HashCompareService.Compute(file);
+            Equal("900150983cd24fb0d6963f7d28e17f72", md5, "MD5 已知向量");
+            Equal("a9993e364706816aba3e25717850c26c9cd0d89d", sha1, "SHA-1 已知向量");
+            Equal("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", sha256, "SHA-256 已知向量");
+
+            // 粘贴匹配：大小写与空白清洗
+            var match = HashCompareService.Verify(
+                "  BA7816BF8F01CFEA414140DE5DAE2223 B00361A396177A9CB410FF61F20015AD ", sha256);
+            That(match is { Matches: true }, "正确 SHA-256（大小写/空白清洗后）应匹配");
+            Equal("SHA-256", match!.Algorithm, "64 位 hex → SHA-256");
+            Equal(sha256, match.Actual, "结果应展示实际值（统一小写）");
+
+            // 不匹配：两值都展示
+            var mismatch = HashCompareService.Verify(
+                "0000000000000000000000000000000000000000000000000000000000000000", sha256);
+            That(mismatch is { Matches: false }, "错误哈希应不匹配");
+            Equal("0000000000000000000000000000000000000000000000000000000000000000",
+                mismatch!.Expected, "不匹配时应展示期望值");
+            Equal(sha256, mismatch.Actual, "不匹配时也应展示实际值");
+
+            // 按长度识别算法
+            Equal("MD5", HashCompareService.Verify(md5, md5)?.Algorithm, "32 位 hex → MD5");
+            Equal("SHA-1", HashCompareService.Verify(sha1, sha1)?.Algorithm, "40 位 hex → SHA-1");
+
+            // 无法识别 → null
+            That(HashCompareService.Verify("xyz", sha256) is null, "非十六进制 → null");
+            That(HashCompareService.Verify("1234", sha256) is null, "长度无法识别 → null");
+            That(HashCompareService.Verify("", sha256) is null, "空粘贴 → null");
+            That(HashCompareService.Verify(null, sha256) is null, "null 粘贴 → null");
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────
