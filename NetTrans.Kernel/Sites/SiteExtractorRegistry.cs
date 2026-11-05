@@ -17,4 +17,8 @@ public sealed class SiteExtractorRegistry
             if (site.CanHandle(url)) return site;
         return null;
     }
+
+    /// <summary>所有声称能处理该 URL 的提取器（注册序）：放弃认领（ExtractAsync
+    /// 返回 null）时框架应依次尝试下一个，全部放弃才回退协议探测。</summary>
+    public IEnumerable<ISiteExtractor> FindAll(string url) => _sites.Where(s => s.CanHandle(url));
 }

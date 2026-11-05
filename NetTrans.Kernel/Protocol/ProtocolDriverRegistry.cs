@@ -33,6 +33,8 @@ public sealed class ProtocolDriverRegistry
         _sites.Register(new YouTubeSite());
         // 兜底提取器必须最后注册：CanHandle 声称一切 http(s) URL，注册顺序保证内置站点优先
         if (_options.EnableYtDlp) _sites.Register(new YtDlpSite(_options.YtDlpRunner));
+        // P1-8：通用页面直链兜底，最后注册；放弃认领时框架交给下一个认领者或协议探测
+        _sites.Register(new GenericPageSite());
     }
 
     public void Register(IProtocolDriver driver) => _drivers[driver.Protocol] = driver;
@@ -84,34 +86,17 @@ public sealed class ProtocolDriverRegistry
 
     private async Task<ResourceProbe?> ProbeWithSiteAsync(string url, DriverContext context, CancellationToken cancellation)
     {
-        var site = _sites.Find(url);
-        if (site is null) return null;
+        var claimers = _sites.FindAll(url).ToList();
+        if (claimers.Count == 0) return null;
 
-        SiteMedia? media;
-        try
+        // 认领 = 愿意尝试：放弃认领 / 抛异常 / 流全部不可用时依次尝试下一个认领者
+        ResourceProbe? unsupported = null;
+        foreach (var site in claimers)
         {
-            media = await site.ExtractAsync(url, context, cancellation);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception error)
-        {
-            context.Log?.Invoke($"站点解析（{site.Name}）失败，回退协议探测（{DriverHelpers.Brief(error.Message)}）");
-            return null;
-        }
-
-        if (media is null) return null; // 提取器放弃认领
-
-        context.Log?.Invoke($"站点解析（{site.Name}）：{media.Title} · {media.Streams.Count} 条候选流");
-
-        foreach (var stream in media.Streams)
-        {
-            ResourceProbe? probe;
+            SiteMedia? media;
             try
             {
-                probe = await ProbeStreamAsync(media, stream, context, cancellation);
+                media = await site.ExtractAsync(url, context, cancellation);
             }
             catch (OperationCanceledException)
             {
@@ -119,18 +104,44 @@ public sealed class ProtocolDriverRegistry
             }
             catch (Exception error)
             {
-                context.Log?.Invoke($"直链探测失败（{stream.Label}）：{DriverHelpers.Brief(error.Message)}");
-                probe = null;
+                context.Log?.Invoke($"站点解析（{site.Name}）失败，尝试下一个认领者（{DriverHelpers.Brief(error.Message)}）");
+                continue;
             }
 
-            if (probe is not null) return probe;
-            context.Log?.Invoke($"跳过不可用的流（{stream.Label}），尝试下一条");
+            if (media is null)
+            {
+                context.Log?.Invoke($"站点提取器（{site.Name}）放弃认领，尝试下一个");
+                continue;
+            }
+
+            context.Log?.Invoke($"站点解析（{site.Name}）：{media.Title} · {media.Streams.Count} 条候选流");
+
+            foreach (var stream in media.Streams)
+            {
+                ResourceProbe? probe;
+                try
+                {
+                    probe = await ProbeStreamAsync(media, stream, context, cancellation);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception error)
+                {
+                    context.Log?.Invoke($"直链探测失败（{stream.Label}）：{DriverHelpers.Brief(error.Message)}");
+                    probe = null;
+                }
+
+                if (probe is not null) return probe;
+                context.Log?.Invoke($"跳过不可用的流（{stream.Label}），尝试下一条");
+            }
+
+            unsupported ??= DriverHelpers.Unsupported(url, DownloadProtocol.Http,
+                $"{site.Name}：已解析出 {media.Streams.Count} 条流但均不可下载");
         }
 
-        return DriverHelpers.Unsupported(url, DownloadProtocol.Http,
-            media.Streams.Count > 0
-                ? $"{site.Name}：已解析出 {media.Streams.Count} 条流但均不可下载"
-                : $"{site.Name}：页面没有可下载的流");
+        return unsupported;
     }
 
     /// <summary>Probe one direct stream with the matching protocol driver; null = unusable, try the next.</summary>

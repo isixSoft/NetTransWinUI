@@ -397,4 +397,71 @@ internal sealed partial class Program
         var fellPlan = AssertPlan<TransferPlan.ByteRanges>(fell, "坏 JSON 应回退协议探测");
         Equal(server.Base + "ytd2/page.html", fellPlan.Url, "回退计划应指向原始 URL");
     }
+
+    // ── 30. 通用页面直链兜底（P1-8：<a>/<video>/<source> 过滤） ───────────
+
+    private static async Task GenericPageExtractAsync(TestServer server)
+    {
+        const string html = """
+            <html><head><title>发布页</title></head><body>
+            <a href="/page/about">关于</a>
+            <a href="#top">回到顶部</a>
+            <a href="mailto:hi@example.org">联系</a>
+            <a href="files/report.pdf">下载报告</a>
+            <a href="files/report.pdf">重复链接</a>
+            <video controls><source src="stream/index.m3u8" type="application/vnd.apple.mpegurl"></video>
+            </body></html>
+            """;
+        server.Map("page/release", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(html), "text/html"));
+        server.Map("page/binary", ctx => TestServer.Reply(ctx.Response, 200, Payload(256), "application/octet-stream"));
+
+        using var http = new HttpClient();
+        var context = new DriverContext
+        {
+            Options = new KernelOptions(),
+            Http = http,
+            Headers = new Dictionary<string, string>(),
+        };
+        var site = new GenericPageSite();
+
+        That(site.CanHandle(server.Base + "page/release"), "无文件扩展名的 http(s) 页面应认领");
+        That(!site.CanHandle(server.Base + "page/files/report.pdf"), "常见直链扩展名不应当页面认领");
+
+        var media = await site.ExtractAsync(server.Base + "page/release", context, CancellationToken.None);
+        That(media is not null, "HTML 页面应解析出候选");
+        Equal("发布页", media!.Title, "标题取 <title>");
+        Equal(2, media.Streams.Count, "导航/锚点/mailto 应过滤，pdf 去重 → 两类候选");
+        That(media.Streams[0].Url == server.Base + "page/stream/index.m3u8",
+            $"流媒体候选应排前且解析为绝对 URL，实际 {media.Streams[0].Url}");
+        That(media.Streams[1].Url == server.Base + "page/files/report.pdf",
+            $"pdf 直链候选第二，实际 {media.Streams[1].Url}");
+
+        That(await site.ExtractAsync(server.Base + "page/binary", context, CancellationToken.None) is null,
+            "非 HTML 内容应放弃认领（回退协议探测）");
+    }
+
+    private static async Task GenericPageKernelAsync(TestServer server)
+    {
+        const string html = """
+            <html><head><title>双候选页</title></head><body>
+            <a href="files/manual.pdf">手册</a>
+            <video><source src="stream/index.m3u8" type="application/vnd.apple.mpegurl"></video>
+            </body></html>
+            """;
+        const string playlist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10,
+            seg0.ts
+            #EXT-X-ENDLIST
+            """;
+        server.Map("page/dual", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(html), "text/html"));
+        server.Map("page/stream/index.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(playlist), "application/vnd.apple.mpegurl"));
+
+        var registry = new ProtocolDriverRegistry(new KernelOptions(), ProbeHttp);
+        var probe = await registry.ProbeAsync(server.Base + "page/dual", null, null, default);
+        var plan = AssertPlan<TransferPlan.SegmentFiles>(probe, "页面兜底应选中 m3u8 最优流并可传输");
+        Equal($"{server.Base}page/stream/seg0.ts", plan.Segments.Single(), "m3u8 分段应解析为绝对 URL");
+        Equal("双候选页.ts", probe.Name, "任务名 = 页面标题 + 最优流扩展名");
+    }
 }

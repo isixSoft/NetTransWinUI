@@ -102,6 +102,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("28c. DASH 文本轨：text AdaptationSet 外置字幕列出", () => DashSubtitlesAsync(server));
         await RunAsync("29a. 批量导入：txt 3 行 → 3 任务归指定队列并完成", () => BatchImportFileAsync(server));
         await RunAsync("29b. 批量导入：空行/注释/空白跳过 + 空文本 0 任务", () => BatchImportEdgesAsync(server));
+        await RunAsync("30a. 通用页面兜底：pdf 直链+m3u8 两类候选 + 非放弃路径", () => GenericPageExtractAsync(server));
+        await RunAsync("30b. 通用页面兜底：内核级最优流可传输", () => GenericPageKernelAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
