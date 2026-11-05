@@ -117,9 +117,10 @@ public sealed partial class ShellViewModel : ObservableObject
     public string TabActiveLabel => $"进行中 {ActiveCount}";
     public string TabDoneLabel => $"已完成 {DoneCount}";
     public string FoldLabel => IsListExpanded ? "收起" : $"展开更多 {HiddenCount} 项";
-    public string ToggleAllTooltip => IsRunning ? "全部暂停" : "全部开始";
-    public string RemoveTooltip => SelectionCount > 1 ? $"删除 {SelectionCount} 项" : "删除";
-    public string InspectorTooltip => ShowInspector ? "关闭详情窗口" : "打开详情窗口";
+    // P2-9 多语言：动态 tooltip 走 L10n
+    public string ToggleAllTooltip => IsRunning ? L10n.Get("TooltipToggleAllPause") : L10n.Get("TooltipToggleAllStart");
+    public string RemoveTooltip => SelectionCount > 1 ? L10n.Get("TooltipRemoveCount", SelectionCount) : L10n.Get("TooltipRemove");
+    public string InspectorTooltip => ShowInspector ? L10n.Get("TooltipInspectorClose") : L10n.Get("TooltipInspectorOpen");
     public bool CanRemove => SelectionCount > 0;
     public bool CanOpenFolder => Current is not null;
 

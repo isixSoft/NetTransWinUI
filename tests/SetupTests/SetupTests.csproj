@@ -28,9 +28,9 @@
     <Compile Include="../../NetTrans/Models/SpeedProfile.cs" Link="Linked/SpeedProfile.cs" />
   </ItemGroup>
 
-  <!-- The P2-9 resw contract tests read the app's real Strings/**/Resources.resw;
-       bake the test project's path into the assembly so the tests find the repo
-       no matter where --artifacts-path puts the binaries. -->
+  <!-- P2-9 resw contract tests read the app's real Strings/.../Resources.resw.
+       Bake the test-project path into the assembly so the tests still find the
+       repo when the build uses an artifacts-path outside the repo tree. -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>RepoRoot</_Parameter1>

@@ -26,12 +26,14 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        ThemeBrushes.SetTheme(Current.RequestedTheme);
-
-        // The download kernel lives in its own UI-free assembly; TaskManager is
-        // the only seam between it and the observable UI tree. Settings load
-        // first so the real kernel boots from the 设置 sheet's values.
+        // P2-9 多语言：必须在任何 XAML 参与布局之前（包括 ThemeBrushes
+        // 读取 Theme）设置 PrimaryLanguageOverride，这样 Resources.resw
+        // 被 MRT Core 正确加载。
         ISettingsStore settingsStore = new JsonSettingsStore();
+        var bootstrap = settingsStore.Load();
+        L10n.Apply(bootstrap.Language);
+
+        ThemeBrushes.SetTheme(Current.RequestedTheme);
         IDownloadKernel kernel = UseRealKernel
             ? new RealDownloadKernel(KernelOptionsFactory.Create(settingsStore.Load()))
             : new SimulatedDownloadKernel();

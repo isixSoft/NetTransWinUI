@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="xml:space" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="xml:space" type="xsd:string" use="preserve" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Toolbar static tooltips (x:Uid) -->
+  <data name="ToolbarAdd.TooltipService.ToolTip" xml:space="preserve"><value>New download</value></data>
+  <data name="ToolbarOpenFolder.TooltipService.ToolTip" xml:space="preserve"><value>Open folder</value></data>
+  <data name="ToolbarSniff.TooltipService.ToolTip" xml:space="preserve"><value>Video sniff</value></data>
+  <data name="ToolbarSettings.TooltipService.ToolTip" xml:space="preserve"><value>Settings</value></data>
+
+  <!-- Dynamic tooltips (ShellViewModel pulls these via L10n) -->
+  <data name="TooltipToggleAllStart" xml:space="preserve"><value>Start all</value></data>
+  <data name="TooltipToggleAllPause" xml:space="preserve"><value>Pause all</value></data>
+  <data name="TooltipRemove" xml:space="preserve"><value>Remove</value></data>
+  <data name="TooltipRemoveCount" xml:space="preserve"><value>Remove {0} items</value></data>
+  <data name="TooltipInspectorOpen" xml:space="preserve"><value>Open details</value></data>
+  <data name="TooltipInspectorClose" xml:space="preserve"><value>Close details</value></data>
+
+  <!-- Settings sheet -->
+  <data name="SettingsSheet.Title" xml:space="preserve"><value>Settings</value></data>
+  <data name="SettingsSheet.RightLabel" xml:space="preserve"><value>Done</value></data>
+  <data name="SettingsGroupDownload.Text" xml:space="preserve"><value>Download</value></data>
+  <data name="SettingsGroupQueue.Text" xml:space="preserve"><value>Queue &amp; schedule</value></data>
+  <data name="SettingsGroupBehavior.Text" xml:space="preserve"><value>Behavior</value></data>
+  <data name="SettingsRowSavePath.Label" xml:space="preserve"><value>Default location</value></data>
+  <data name="SettingsRowFolders.Label" xml:space="preserve"><value>Group by category</value></data>
+  <data name="SettingsRowNameTemplate.Label" xml:space="preserve"><value>File name template</value></data>
+  <data name="SettingsNameTemplate.PlaceholderText" xml:space="preserve"><value>Auto-name by default</value></data>
+  <data name="SettingsRowConcurrency.Label" xml:space="preserve"><value>Concurrent downloads</value></data>
+  <data name="SettingsRowGlobalLimit.Label" xml:space="preserve"><value>Global speed limit</value></data>
+  <data name="SettingsRowProfile.Label" xml:space="preserve"><value>Speed profile</value></data>
+  <data name="SettingsRowNight.Label" xml:space="preserve"><value>Uncapped at night</value></data>
+  <data name="SettingsRowSchedule.Label" xml:space="preserve"><value>Scheduled window</value></data>
+  <data name="SettingsRowRetry.Label" xml:space="preserve"><value>Auto retry on failure</value></data>
+  <data name="SettingsRowAfter.Label" xml:space="preserve"><value>After all complete</value></data>
+  <data name="SettingsRowLanguage.Label" xml:space="preserve"><value>Language</value></data>
+  <data name="SettingsNoteLanguage.Text" xml:space="preserve"><value>Language change takes effect on next launch.</value></data>
+  <data name="SettingsRowClipboard.Label" xml:space="preserve"><value>Monitor clipboard</value></data>
+  <data name="SettingsRowNotify.Label" xml:space="preserve"><value>Notify on completion</value></data>
+  <data name="SettingsRowMotw.Label" xml:space="preserve"><value>Mark origin on completion</value></data>
+  <data name="SettingsRowVerify.Label" xml:space="preserve"><value>Verify SHA-256 on completion</value></data>
+  <data name="SettingsRowScan.Label" xml:space="preserve"><value>Virus scan on completion</value></data>
+  <data name="SettingsRowEdge.Label" xml:space="preserve"><value>Hide to screen edge</value></data>
+  <data name="SettingsRowIsland.Label" xml:space="preserve"><value>Show floating window</value></data>
+  <data name="SettingsRowBossKey.Label" xml:space="preserve"><value>Boss key</value></data>
+  <data name="SettingsNoteBossKey.Text" xml:space="preserve"><value>Press the boss key to hide the main window, floating window and tray icon — downloads continue in the background.</value></data>
+  <data name="SettingsNotePortable.Text" xml:space="preserve"><value>Portable mode: settings write next to the executable. No registry writes, no protocol association, no startup entry.</value></data>
+  <data name="SettingsOptimize.Content" xml:space="preserve"><value>Apply concurrency tuning…</value></data>
+
+  <!-- Language dropdown display names + runtime toasts -->
+  <data name="LangAuto" xml:space="preserve"><value>Follow system</value></data>
+  <data name="LangEn" xml:space="preserve"><value>English</value></data>
+  <data name="LangZhCN" xml:space="preserve"><value>简体中文</value></data>
+  <data name="NotifyClipboardStarted" xml:space="preserve"><value>Clipboard monitoring started</value></data>
+  <data name="NotifyClipboardStopped" xml:space="preserve"><value>Clipboard monitoring stopped</value></data>
+  <data name="NotifyConcurrencyOpt" xml:space="preserve"><value>Concurrency tuning queued (requires system settings change)</value></data>
+</root>

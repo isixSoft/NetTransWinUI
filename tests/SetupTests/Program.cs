@@ -558,6 +558,12 @@ internal static class Program
         "SettingsNoteBossKey.Text",
         "SettingsNotePortable.Text",
         "SettingsOptimize.Content",
+        "LangAuto",
+        "LangEn",
+        "LangZhCN",
+        "NotifyClipboardStarted",
+        "NotifyClipboardStopped",
+        "NotifyConcurrencyOpt",
     };
 
     private static string[] AllL10nKeys =>

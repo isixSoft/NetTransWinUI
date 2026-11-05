@@ -20,6 +20,11 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
 
+    <!-- P2-9 多语言基础设施：Strings/<lang>/Resources.resw 由 MRT Core 打包进
+         PRI；SupportedUILanguages 告诉应用运行时这些语言资源存在，
+         PrimaryLanguageOverride 才能在启动时正确切换。 -->
+    <SupportedUILanguages>en;zh-CN</SupportedUILanguages>
+
     <!-- .NET 8+ uses the portable RID graph: win-x64, not win10-x64. -->
     <Platforms>x86;x64;arm64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
@@ -36,6 +41,12 @@
     <!-- AttachedCardShadow: the only way to reproduce the handoff's blurred
          box-shadows (segmented thumb, popovers, sheet, toast, island). -->
     <PackageReference Include="CommunityToolkit.WinUI.Media" Version="8.2.251219" />
+  </ItemGroup>
+
+  <!-- P2-9 MRT Core resource files: Strings/<lang>/Resources.resw → AppX PRI.
+       WindowsAppSDK 2.x exposes the pack tasks through the SDK's PRIResource item. -->
+  <ItemGroup>
+    <PRIResource Include="Strings\**\*.resw" />
   </ItemGroup>
 
   <ItemGroup>

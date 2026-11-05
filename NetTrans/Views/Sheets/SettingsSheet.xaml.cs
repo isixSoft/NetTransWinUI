@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using NetTrans.Services;
 using NetTrans.ViewModels;
 
 namespace NetTrans.Views.Sheets;
@@ -42,6 +43,15 @@ public sealed partial class SettingsSheet : UserControl
         Select(RetryBox, settings.RetryPolicy);
         Select(AfterBox, settings.WhenAllComplete);
 
+        // P2-9 语言下拉：显示名本地化 + 值为语言码（auto/en/zh-CN）
+        LanguageBox.ItemsSource = new[]
+        {
+            new KeyValuePair<string, string>(L10n.Get("LangAuto"), "auto"),
+            new KeyValuePair<string, string>(L10n.Get("LangEn"), "en"),
+            new KeyValuePair<string, string>(L10n.Get("LangZhCN"), "zh-CN"),
+        };
+        SelectByValue(LanguageBox, settings.Language);
+
         _loading = false;
     }
 
@@ -54,6 +64,19 @@ public sealed partial class SettingsSheet : UserControl
             return;
         }
 
+        box.SelectedIndex = 0;
+    }
+
+    /// <summary>For LanguageBox whose items are KeyValuePair (display, lang-code).</summary>
+    private static void SelectByValue(ComboBox box, string value)
+    {
+        for (int i = 0; i < box.Items.Count; i++)
+        {
+            if (box.Items[i] is KeyValuePair<string, string> kv && kv.Value == value)
+            {
+                box.SelectedIndex = i; return;
+            }
+        }
         box.SelectedIndex = 0;
     }
 
@@ -72,7 +95,7 @@ public sealed partial class SettingsSheet : UserControl
     private void OnClipboardToggled(object? sender, bool value)
     {
         Update(s => s.WatchClipboard = value);
-        _viewModel.Say(value ? "已开始监视剪贴板" : "已停止监视剪贴板");
+        _viewModel.Say(value ? L10n.Get("NotifyClipboardStarted") : L10n.Get("NotifyClipboardStopped"));
     }
 
     private void OnEdgeToggled(object? sender, bool value)
@@ -107,8 +130,15 @@ public sealed partial class SettingsSheet : UserControl
     private void OnAfterChanged(object sender, SelectionChangedEventArgs e) =>
         Update(s => s.WhenAllComplete = AfterBox.SelectedItem as string ?? "无操作");
 
+    /// <summary>P2-9 语言切换：值存为 auto/en/zh-CN，下次启动生效。</summary>
+    private void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        Update(s => s.Language = (LanguageBox.SelectedItem as KeyValuePair<string, string>?)?.Value ?? "auto");
+    }
+
     private void OnOptimizeClick(object sender, RoutedEventArgs e) =>
-        _viewModel.Say("并发数优化会改动系统设置，已记录为待执行");
+        _viewModel.Say(L10n.Get("NotifyConcurrencyOpt"));
 
     private void OnClosed(object? sender, EventArgs e) => _viewModel.ActiveSheet = null;
 
