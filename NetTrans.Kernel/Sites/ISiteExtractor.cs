@@ -34,4 +34,12 @@ public interface ISiteExtractor
     /// 抛异常 = 站点解析失败（框架记日志后同样回退协议探测）。
     /// </summary>
     Task<SiteMedia?> ExtractAsync(string url, DriverContext context, CancellationToken cancellation);
+
+    /// <summary>
+    /// 站点批量抓取（P2-6）：列表页/主页一次解析出多条任务草稿，每条
+    /// <see cref="SiteMedia"/> 是一个独立媒体（其第 0 条流即下载目标）。
+    /// 返回 null = 不支持批量（默认），框架尝试下一个认领者。
+    /// </summary>
+    Task<IReadOnlyList<SiteMedia>?> ExtractDraftsAsync(string url, DriverContext context, CancellationToken cancellation)
+        => Task.FromResult<IReadOnlyList<SiteMedia>?>(null);
 }

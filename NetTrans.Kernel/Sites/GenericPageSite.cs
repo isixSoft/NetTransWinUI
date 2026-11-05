@@ -42,6 +42,30 @@ public sealed class GenericPageSite : ISiteExtractor
 
     public async Task<SiteMedia?> ExtractAsync(string url, DriverContext context, CancellationToken cancellation)
     {
+        var (title, streaming, files) = await ScanPageAsync(url, context, cancellation);
+        if (streaming is null) return null;
+
+        var streams = streaming.Concat(files).ToList();
+        context.Log?.Invoke($"通用页面：{streaming.Count} 个流引用 / {files.Count} 个直链文件");
+        return new SiteMedia(Name, title, streams);
+    }
+
+    /// <summary>批量抓取（P2-6）：页面上的每个候选（流引用 / 直链文件）各成一条任务草稿。</summary>
+    public async Task<IReadOnlyList<SiteMedia>?> ExtractDraftsAsync(string url, DriverContext context, CancellationToken cancellation)
+    {
+        var (title, streaming, files) = await ScanPageAsync(url, context, cancellation);
+        if (streaming is null) return null;
+
+        context.Log?.Invoke($"通用页面批量：{streaming.Count} 个流引用 / {files.Count} 个直链文件 → {streaming.Count + files.Count} 条草稿");
+        return streaming.Concat(files)
+            .Select(stream => new SiteMedia(Name, title, new[] { stream }))
+            .ToList();
+    }
+
+    /// <summary>抓取页面并扫描候选；streaming 为 null = 放弃认领（抓取失败 / 非 HTML / 无候选）。</summary>
+    private async Task<(string Title, List<SiteStream> Streaming, List<SiteStream> Files)> ScanPageAsync(
+        string url, DriverContext context, CancellationToken cancellation)
+    {
         string html;
         try
         {
@@ -54,13 +78,13 @@ public sealed class GenericPageSite : ISiteExtractor
         catch (Exception error)
         {
             context.Log?.Invoke($"通用页面：抓取失败，放弃认领（{DriverHelpers.Brief(error.Message)}）");
-            return null;
+            return ("", null!, null!);
         }
 
         if (!LooksLikeHtml(html))
         {
             context.Log?.Invoke("通用页面：内容不是 HTML，放弃认领");
-            return null;
+            return ("", null!, null!);
         }
 
         var title = "";
@@ -111,15 +135,13 @@ public sealed class GenericPageSite : ISiteExtractor
             // 其余（导航 / 锚点 / 无扩展名资源）一律跳过
         }
 
-        var streams = streaming.Concat(files).ToList();
-        if (streams.Count == 0)
+        if (streaming.Count == 0 && files.Count == 0)
         {
             context.Log?.Invoke("通用页面：未发现可下载候选，放弃认领");
-            return null;
+            return ("", null!, null!);
         }
 
-        context.Log?.Invoke($"通用页面：{streaming.Count} 个流引用 / {files.Count} 个直链文件");
-        return new SiteMedia(Name, title, streams);
+        return (title, streaming, files);
     }
 
     // <a href> / <video src> / <source src>（<audio> 里的 <source> 一并覆盖）

@@ -464,4 +464,46 @@ internal sealed partial class Program
         Equal($"{server.Base}page/stream/seg0.ts", plan.Segments.Single(), "m3u8 分段应解析为绝对 URL");
         Equal("双候选页.ts", probe.Name, "任务名 = 页面标题 + 最优流扩展名");
     }
+
+    // ── 36. 站点批量抓取（P2-6：列表页一次解析出多条任务草稿） ────────────
+
+    private static async Task PageBatchDraftsAsync(TestServer server)
+    {
+        var pdf = Payload(2048);
+        var mp3 = Payload(4096);
+        var zip = Payload(8192);
+        const string html = """
+            <html><head><title>资源页</title></head><body>
+            <a href="files/doc.pdf">文档</a>
+            <a href="#top">锚点</a>
+            <a href="mailto:hi@example.org">邮件</a>
+            <a href="data:text/plain,hi">data</a>
+            <a href="media/song.mp3">歌曲</a>
+            <a href="media/clip.zip">压缩包</a>
+            </body></html>
+            """;
+        server.Map("page/batch", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(html), "text/html"));
+        server.Map("page/files/doc.pdf", server.RangeFile(pdf, contentType: "application/pdf"));
+        server.Map("page/media/song.mp3", server.RangeFile(mp3, contentType: "audio/mpeg"));
+        server.Map("page/media/clip.zip", server.RangeFile(zip, contentType: "application/zip"));
+
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 3 });
+        var allDone = NewSignal();
+        int done = 0;
+        kernel.TaskCompleted += _ => { if (Interlocked.Increment(ref done) == 3) allDone.TrySetResult(); };
+
+        var tasks = await kernel.AddPageBatchAsync(server.Base + "page/batch", dir, TaskPriority.Normal, StartNow: true);
+
+        Equal(3, tasks.Count, "页面应解析出 3 条媒体草稿（锚点/data:/mailto 跳过）");
+        That(tasks[0].Url.EndsWith("doc.pdf"), "第 1 条草稿应是 doc.pdf（按页面出现序）");
+        That(tasks[1].Url.EndsWith("song.mp3"), "第 2 条草稿应是 song.mp3");
+        That(tasks[2].Url.EndsWith("clip.zip"), "第 3 条草稿应是 clip.zip");
+        await WaitSignalAsync(allDone.Task, "3 个批量任务应全部完成", 60_000);
+        That(tasks.All(t => t.Status == DownloadStatus.Completed), "批量任务状态应全为 Completed");
+        Equal(Hash(pdf), Hash(File.ReadAllBytes(Path.Combine(dir, "doc.pdf"))), "pdf 落盘字节应完整");
+        Equal(Hash(mp3), Hash(File.ReadAllBytes(Path.Combine(dir, "song.mp3"))), "mp3 落盘字节应完整");
+        Equal(Hash(zip), Hash(File.ReadAllBytes(Path.Combine(dir, "clip.zip"))), "zip 落盘字节应完整");
+        Equal(3, kernel.Tasks.Count, "内核应恰好只有批量入队的 3 个任务");
+    }
 }

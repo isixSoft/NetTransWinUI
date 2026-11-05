@@ -85,6 +85,51 @@ public sealed class ProtocolDriverRegistry
 
     // ── 站点层：页面 URL → 直链流 → 复用协议驱动探测 ─────────────────────
 
+    /// <summary>站点批量抓取（P2-6）：第一个支持批量的认领者解析出的任务草稿；
+    /// 都不支持/放弃 → 空列表。</summary>
+    public async Task<IReadOnlyList<SiteMedia>> ExtractDraftsAsync(
+        string url,
+        IReadOnlyDictionary<string, string>? headers,
+        LogSink? log,
+        CancellationToken cancellation)
+    {
+        var context = new DriverContext
+        {
+            Options = _options,
+            Http = _http,
+            Headers = headers ?? _options.DefaultHeaders,
+            Log = log,
+        };
+
+        foreach (var site in _sites.FindAll(url))
+        {
+            IReadOnlyList<SiteMedia>? drafts;
+            try
+            {
+                drafts = await site.ExtractDraftsAsync(url, context, cancellation);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                log?.Invoke($"站点批量解析（{site.Name}）失败，尝试下一个认领者（{DriverHelpers.Brief(error.Message)}）");
+                continue;
+            }
+
+            if (drafts is null)
+            {
+                log?.Invoke($"站点提取器（{site.Name}）不支持批量，尝试下一个");
+                continue;
+            }
+
+            return drafts;
+        }
+
+        return Array.Empty<SiteMedia>();
+    }
+
     private async Task<ResourceProbe?> ProbeWithSiteAsync(string url, DriverContext context, CancellationToken cancellation)
     {
         var claimers = _sites.FindAll(url).ToList();
