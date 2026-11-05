@@ -36,6 +36,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
     private int _nextId = 100;
     private int _active;
     private bool? _lastWindowExempt;
+    private bool _allCompleteFired; // 「全部完成」收尾动作只触发一次，直到又有新任务排队
     private readonly SpeedLimiter _globalLimiter = new(0); // 共享全局桶：所有任务合计受全局限速约束
 
     private sealed class Runtime
@@ -57,6 +58,10 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         /// collision rewrite is decided exactly once per task.
         /// </summary>
         public string? SavePath;
+
+        /// <summary>任务级「完成后动作」（P0-4），来自 NewDownloadRequest；None = 无。</summary>
+        public AfterCompletion OnComplete;
+        public string? OnCompleteCommand;
     }
 
     public RealDownloadKernel(KernelOptions? options = null)
@@ -164,9 +169,16 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         {
             task = BuildTask(_nextId++, request);
             _tasks.Add(task);
-            var runtime = new Runtime { Task = task, Headers = request.Headers };
+            var runtime = new Runtime
+            {
+                Task = task,
+                Headers = request.Headers,
+                OnComplete = request.OnComplete,
+                OnCompleteCommand = request.OnCompleteCommand,
+            };
             _runtimes[task.Id] = runtime;
             ApplyLimitLocked(runtime);
+            _allCompleteFired = false; // 又有新工作，全局收尾动作可以再次触发
         }
 
         TaskAdded?.Invoke(task);
@@ -210,6 +222,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
             {
                 task.Status = DownloadStatus.Queued;
                 task.ErrorMessage = null;
+                _allCompleteFired = false; // 又有排队任务，全局收尾动作可以再次触发
                 Log(task, "已加入队列，等待空闲通道");
                 scheduled = true;
             }
@@ -357,6 +370,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
             else
             {
                 task.Status = DownloadStatus.Queued;
+                _allCompleteFired = false; // 重新排队即重新计「全部完成」
                 scheduled = true;
             }
         }

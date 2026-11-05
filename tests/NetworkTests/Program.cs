@@ -80,6 +80,9 @@ internal sealed partial class Program : TestKit
         await RunAsync("21a. yt-dlp 映射单元：formats 过滤/排序/字幕/流头", YtDlpMappingUnitAsync);
         await RunAsync("21b. yt-dlp 注册表：兜底命中最优流/默认关闭/缺二进制回退", () => YtDlpRegistryAsync(server));
         await RunAsync("21c. yt-dlp 坏输出与空 formats：异常回退/放弃认领", () => YtDlpBadOutputAsync(server));
+        await RunAsync("22a. 完成后动作：任务级 runner 恰一次 + 事件字段", () => CompletionActionTaskAsync(server));
+        await RunAsync("22b. 完成后动作：全局「全部完成」才收尾触发", () => CompletionActionAllAsync(server));
+        await RunAsync("22c. 完成后动作：异常 runner 不崩内核 + 命令展开", () => CompletionActionErrorAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

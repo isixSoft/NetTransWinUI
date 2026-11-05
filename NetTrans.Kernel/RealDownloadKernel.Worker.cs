@@ -169,11 +169,70 @@ public sealed partial class RealDownloadKernel
         {
             await VerifyChecksumAsync(task, runtime);
             TaskCompleted?.Invoke(task);
+            await RunCompletionActionsAsync(task, runtime);
         }
 
         TaskUpdated?.Invoke(task);
         Schedule();
     }
+
+    // ── 完成后动作（P0-4）：任务级优先，全局级「全部完成」收尾；runner 异常只记日志 ──
+
+    /// <summary>
+    /// TaskCompleted 之后调用：任务级动作在各自任务完成时触发；无任务级动作时
+    /// 检查全局「全部完成」——没有排队/下载中的任务（暂停与失败不拦收尾）就触发
+    /// 恰一次，直到又有任务排队（Add/Toggle/Redownload 重置闸门）。
+    /// 校验失败会把状态翻成 Error，此处以 Status==Completed 为准，不触发动作。
+    /// </summary>
+    private async Task RunCompletionActionsAsync(DownloadTask task, Runtime runtime)
+    {
+        var runner = _options.CompletionRunner;
+        if (runner is null || task.Status != DownloadStatus.Completed) return;
+
+        if (runtime.OnComplete != AfterCompletion.None)
+        {
+            await FireCompletionAsync(runner, task, new CompletionEvent(
+                task.Name, runtime.SavePath, runtime.OnComplete,
+                ExpandCompletion(runtime.OnCompleteCommand, runtime.SavePath, task.Name),
+                FromAllCompleted: false));
+        }
+
+        var global = _options.AllComplete;
+        if (global == AfterCompletion.None) return;
+
+        lock (_gate)
+        {
+            if (_tasks.Any(t => t.Status is DownloadStatus.Queued or DownloadStatus.Downloading)) return;
+            if (_allCompleteFired) return;
+            _allCompleteFired = true;
+        }
+
+        await FireCompletionAsync(runner, task, new CompletionEvent(
+            task.Name, runtime.SavePath, global,
+            ExpandCompletion(_options.AllCompleteCommand, runtime.SavePath, task.Name),
+            FromAllCompleted: true));
+    }
+
+    /// <summary>runner 抛异常只记任务日志——完成后动作不能反过来弄脏任务状态。</summary>
+    private async Task FireCompletionAsync(
+        Func<CompletionEvent, CancellationToken, Task> runner, DownloadTask task, CompletionEvent completion)
+    {
+        try
+        {
+            await runner(completion, CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            Log(task, $"完成后动作执行失败（{Brief(error.Message)}）", isError: true);
+        }
+    }
+
+    private static string? ExpandCompletion(string? template, string? savePath, string name) =>
+        template is null ? null : template
+            .Replace("{path}", savePath ?? string.Empty)
+            .Replace("{name}", name);
+
+    private static string Brief(string message) => message.Split('\n', 2)[0].TrimEnd('\r').Trim();
 
     /// <summary>Probe results land on the UI-shaped task: name, size, host.</summary>
     private void ApplyProbe(DownloadTask task, ResourceProbe probe)

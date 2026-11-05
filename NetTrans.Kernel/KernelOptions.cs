@@ -129,4 +129,21 @@ public sealed class KernelOptions
     /// 测试经此注入 fixture 输出，不真跑外部进程。
     /// </summary>
     public Func<string, CancellationToken, Task<string?>>? YtDlpRunner { get; set; }
+
+    /// <summary>
+    /// 全局「完成后动作」：最后一个任务完成（无排队/下载中任务；暂停与失败不拦收尾）
+    /// 时经 <see cref="CompletionRunner"/> 触发一次（FromAllCompleted=true）。
+    /// 任务级配置（NewDownloadRequest.OnComplete）在其任务完成时独立触发，两层可并存。
+    /// </summary>
+    public AfterCompletion AllComplete { get; set; } = AfterCompletion.None;
+
+    /// <summary><see cref="AllComplete"/> = RunCommand 的命令模板（{path} {name} 占位符）。</summary>
+    public string? AllCompleteCommand { get; set; }
+
+    /// <summary>
+    /// 完成后动作 runner：任务级/全局动作到点时被 await 恰一次。内核不真关机——
+    /// 关机/休眠/通知/退出/命令的宿主语义全部由这里注入；runner 抛异常只记任务
+    /// 日志，不影响任务状态。校验失败（Error）不触发。null = 未配置动作时无事发生。
+    /// </summary>
+    public Func<CompletionEvent, CancellationToken, Task>? CompletionRunner { get; set; }
 }

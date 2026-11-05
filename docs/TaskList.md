@@ -9,7 +9,7 @@
 | 圈 | 条目 | 测试落点 | 关键测试先行内容 |
 | --- | --- | --- | --- |
 | 1 | P0-5 yt-dlp 解析适配器（`ISiteExtractor`，`-J` JSON → `SiteMedia`；无 yt-dlp 诚实降级 null） | NetworkTests/SiteExtractors.cs 增 partial 段 | fixture dump-json：formats→Streams 排序、字幕条目映射、缺二进制→null 回退内置提取器、坏 JSON→抛异常回退 |
-| 2 | P0-4 完成后动作（任务级+全局 runner 注入；「队列全完成」判定） | NetworkTests/KernelLifecycle.cs 增段 | 注入 runner 收到 (路径,退出码) 恰一次；多任务全完成才触发；异常动作不崩内核 |
+| 2 | P0-4 完成后动作（任务级+全局 runner 注入；「队列全完成」判定） | NetworkTests/KernelLifecycle.cs 增段 | 注入 runner 收到（任务名/产物路径/动作）恰一次；多任务全完成才触发；异常动作不崩内核 |
 | 3 | P0-3 队列分组与定时启停（可注入时钟；跨午夜窗口） | NetworkTests/KernelLifecycle.cs 增段 | 队列 A 定时到点批量启动、队列外不受影响；跨午夜窗口边界；停止窗口批量暂停 |
 | 4 | P0-1 本地控制 API（HttpListener REST：add/pause/resume/remove/list；仅 localhost 403；端口回退） | NetworkTests/ControlApi.cs 新 partial | POST /tasks 建任务→GET 列表含之→DELETE 移除；非 loopback 来源 403；端口占用回退 |
 | 5 | P0-2 浏览器接管入口（依赖圈4：`nettrans://` 解析 + 握手 token 校验） | NetworkTests/ControlApi.cs 增段 | `nettrans://add?url=…&sha256=…` 解析入队、参数完整；无效 token 拒绝；协议注册本体=UI 侧（文档化，不碰 WinUI） |

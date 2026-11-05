@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
@@ -237,6 +238,109 @@ internal sealed partial class Program
         Equal(DownloadStatus.Error, task.Status, "多分段下服务器背叛 Range 应明确 Error");
         That(task.ErrorMessage!.Contains("断点续传"), $"错误信息应提及断点续传，实际「{task.ErrorMessage}」");
         That(task.Log.Any(l => l.Message.Contains("服务器不支持断点续传")), "日志应记录「服务器不支持断点续传（Range 被忽略）」");
+    }
+
+    // ── 22. 完成后动作（P0-4：任务级 + 全局「全部完成」收尾，runner 注入） ──
+    // 内核不真关机：动作语义由宿主经 KernelOptions.CompletionRunner 注入，
+    // 测试收集 CompletionEvent 断言「恰一次」与字段；校验失败（Error）不触发。
+
+    private static async Task CompletionActionTaskAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("done/a.zip", server.RangeFile(data));
+        server.Map("done/b.zip", server.RangeFile(data));
+
+        var events = new ConcurrentQueue<CompletionEvent>();
+        var options = new KernelOptions
+        {
+            MaxSimultaneous = 1,
+            CompletionRunner = (e, _) => { events.Enqueue(e); return Task.CompletedTask; },
+        };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        var a = kernel.Add(new NewDownloadRequest(server.Base + "done/a.zip", dir, "", 2, TaskPriority.Normal,
+            StartNow: true, OnComplete: AfterCompletion.Notify));
+        var b = kernel.Add(new NewDownloadRequest(server.Base + "done/b.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => a.Status == DownloadStatus.Completed && b.Status == DownloadStatus.Completed,
+            "两个任务都应完成", 60_000);
+        await WaitAsync(() => events.Count == 1, "任务级动作应恰好触发一次", 10_000);
+        await Task.Delay(300);
+        Equal(1, events.Count, "只有配置了动作的 A 触发，且不重复");
+        var completed = events.Single();
+        Equal(AfterCompletion.Notify, completed.Action, "动作种类应来自任务配置");
+        Equal(false, completed.FromAllCompleted, "任务级事件不是全完成事件");
+        Equal(a.Name, completed.TaskName, "事件应携带任务名");
+        That(completed.SavePath is not null && File.Exists(completed.SavePath), "事件应携带已落盘的产物路径");
+    }
+
+    private static async Task CompletionActionAllAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        var stillBusy = new ManualResetEventSlim(false);
+        server.Map("done/g1.zip", server.RangeFile(data));
+        server.Map("done/g2.zip", server.RangeFile(data, onGet: (_, _) =>
+        {
+            stillBusy.Wait(15_000); // 门闩：钉住 g2 在下载中，前半段断言才确定
+            return false;
+        }));
+
+        var events = new ConcurrentQueue<CompletionEvent>();
+        var options = new KernelOptions
+        {
+            MaxSimultaneous = 2,
+            AllComplete = AfterCompletion.Shutdown,
+            CompletionRunner = (e, _) => { events.Enqueue(e); return Task.CompletedTask; },
+        };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        var g1 = kernel.Add(new NewDownloadRequest(server.Base + "done/g1.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        var g2 = kernel.Add(new NewDownloadRequest(server.Base + "done/g2.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
+
+        // g1 完成时 g2 仍在下载（门闩保证）→ 不应收尾
+        await WaitAsync(() => g1.Status == DownloadStatus.Completed, "g1 应完成", 60_000);
+        That(g2.Status == DownloadStatus.Downloading, "前置：g2 应仍处下载中（门闩）");
+        That(events.Count == 0, "还有下载中任务时不应触发全局动作");
+
+        // 放行 g2 → 全部完成 → 恰好触发一次
+        stillBusy.Set();
+        await WaitAsync(() => g2.Status == DownloadStatus.Completed, "g2 应完成", 60_000);
+        await WaitAsync(() => events.Count == 1, "全部完成后应恰好触发一次", 10_000);
+        await Task.Delay(300);
+        Equal(1, events.Count, "全局动作不随单个任务触发，收尾恰一次");
+        var completed = events.Single();
+        Equal(AfterCompletion.Shutdown, completed.Action, "动作种类应来自全局配置");
+        Equal(true, completed.FromAllCompleted, "应为「全部完成」事件");
+        Equal(g2.Name, completed.TaskName, "事件应携带收尾完成的任务名");
+    }
+
+    private static async Task CompletionActionErrorAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("done/c1.zip", server.RangeFile(data));
+        server.Map("done/c2.zip", server.RangeFile(data));
+
+        var events = new ConcurrentQueue<CompletionEvent>();
+        var options = new KernelOptions
+        {
+            CompletionRunner = (e, _) => { events.Enqueue(e); throw new InvalidOperationException("动作炸了"); },
+        };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        var c1 = kernel.Add(new NewDownloadRequest(server.Base + "done/c1.zip", dir, "", 2, TaskPriority.Normal,
+            StartNow: true, OnComplete: AfterCompletion.RunCommand, OnCompleteCommand: "{name} <- {path}"));
+        await WaitAsync(() => c1.Status == DownloadStatus.Completed, "runner 抛异常不应影响任务完成", 60_000);
+        await WaitAsync(() => events.Count == 1, "异常 runner 仍应被调用一次", 10_000);
+        var completed = events.Single();
+        Equal(AfterCompletion.RunCommand, completed.Action, "RunCommand 动作应原样触发");
+        That(completed.Command == $"{c1.Name} <- {completed.SavePath}",
+            $"RunCommand 模板应展开 {{name}}/{{path}}：{completed.Command}");
+        That(c1.Log.Any(l => l.Message.Contains("完成后动作执行失败")), "runner 异常应记入任务日志");
+
+        // 内核仍可用：第二个任务（无动作）正常完成，且不再触发
+        var c2 = kernel.Add(new NewDownloadRequest(server.Base + "done/c2.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => c2.Status == DownloadStatus.Completed, "内核应继续正常工作", 60_000);
+        await Task.Delay(300);
+        Equal(1, events.Count, "c2 无动作，不应再触发");
     }
 
 }

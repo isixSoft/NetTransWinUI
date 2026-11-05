@@ -8,6 +8,8 @@ namespace NetTrans.Kernel;
 /// </param>
 /// <param name="SeedRatio">PT 做种目标分享率（如 1.5）；null = 未指定（模板占位符替换为 0）。</param>
 /// <param name="SeedHours">PT 做种目标小时数；null = 未指定。</param>
+/// <param name="OnComplete">任务级「完成后动作」；None = 无（全局 AllComplete 仍可能收尾触发）。</param>
+/// <param name="OnCompleteCommand">OnComplete = RunCommand 的命令模板（{path} {name} 占位符）。</param>
 public sealed record NewDownloadRequest(
     string Url,
     string SaveTo,
@@ -19,4 +21,6 @@ public sealed record NewDownloadRequest(
     IReadOnlyDictionary<string, string>? Headers = null,
     string? ExpectedHash = null,
     double? SeedRatio = null,
-    int? SeedHours = null);
+    int? SeedHours = null,
+    AfterCompletion OnComplete = AfterCompletion.None,
+    string? OnCompleteCommand = null);
