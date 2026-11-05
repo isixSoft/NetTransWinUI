@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 共享断言基类工程：throw 风格 That/Equal（TestKit.cs，全局命名空间，
+       各测试 Program 直接 : TestKit 继承）。零 NuGet、零依赖——只用 BCL，
+       因此无需 ProjectReference。被 NetworkTests / EndToEndTests / FtpE2ETests /
+       FuzzTests / StressTests / ProxyTests / ExternalEngineTests 七个工程引用。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>TestKit</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

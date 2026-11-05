@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../TestKit/TestKit.cs" />
+    <ProjectReference Include="../TestKit/TestKit.csproj" />
   </ItemGroup>
 
 </Project>
