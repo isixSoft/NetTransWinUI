@@ -36,7 +36,8 @@ P2-1 Metalink4 · P2-2 限速档位 · P2-3 文件名模板 · P2-4 Mark-of-the-
 | 16 | P2-3 文件名模板（{站点}/{标题}.{ext}，非法字符替换，冲突沿用既有命名） | SetupTests 16 契约 + NetworkTests/KernelLifecycle.cs 33a/33b | 模板渲染落盘名一致；模板子目录落盘；段内非法字符→'_'（已完 a8936bf） |
 | 17 | P2-4 Mark-of-the-Web（完成时写 Zone.Identifier，开关可关；POSIX 伴随文件使测试免跳过） | SetupTests 17 映射 + NetworkTests/KernelLifecycle.cs 34a/34b | 默认完成文件带 ZoneId=3 标记；关闭后无标记（已完 4fe4e9b） |
 | 18 | P2-5 ZIP 部分下载（ZipIndex 解析 central directory + AddZipMember 成员传输，Range 只拉 EOCD/CD/成员段） | NetworkTests/ZipPartial.cs 35a/35b | CD 解析（store+deflate 10 成员）；按成员解压正确且字节远小于整包；未知成员入 Error（已完 5274f9f） |
-| 19 | P2-6 站点批量抓取（ISiteExtractor.ExtractDraftsAsync 默认接口方法；GenericPageSite 兜底每候选一草稿；内核 AddPageBatchAsync） | NetworkTests/SiteExtractors.cs 36a | 列表页 3 直链→3 草稿批量入队全完成，锚点/data:/mailto 跳过（已完） |
+| 19 | P2-6 站点批量抓取（ISiteExtractor.ExtractDraftsAsync 默认接口方法；GenericPageSite 兜底每候选一草稿；内核 AddPageBatchAsync） | NetworkTests/SiteExtractors.cs 36a | 列表页 3 直链→3 草稿批量入队全完成，锚点/data:/mailto 跳过（已完 5a44249） |
+| 20 | P2-7 哈希展示比对（HashCompareService.Compute 三算法流式 + Verify 长度识别/清洗/两值展示；UI 接线不在本圈） | SetupTests 18 契约 | NIST "abc" 三算法向量；粘贴大小写/空白清洗匹配；不匹配两值都展示；无法识别 null（已完 7828d49） |
 
 ## 明确不做
 
