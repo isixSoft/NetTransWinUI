@@ -17,6 +17,10 @@
     <!-- Unpackaged (no MSIX) desktop app. Flip WindowsPackageType to "MSIX" and
          add a Package.appxmanifest if you'd rather ship through MSIX/Store. -->
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- P2-9: unpackaged apps still need resources.pri for MRT Core; the Windows
+         App SDK only imports the PRI-generation tooling when EnableMsixTooling is
+         true (see Microsoft.WindowsAppSDK.SingleFile.targets' error message). -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
 

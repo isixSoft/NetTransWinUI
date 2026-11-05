@@ -37,6 +37,7 @@ jobs:
       - name: Verify localized resources (P2-9)
         shell: pwsh
         run: |
-          $pri = Get-ChildItem -Path NetTrans -Filter resources.pri -Recurse -File | Where-Object { $_.FullName -notlike "*\obj\*" }
+          $all = Get-ChildItem -Path NetTrans -Filter *.pri -Recurse -File | Where-Object { $_.FullName -notlike "*\obj\*" }
+          $all | ForEach-Object { Write-Host ("PRI found: {0} ({1} bytes)" -f $_.FullName, $_.Length) }
+          $pri = $all | Where-Object { $_.Name -ieq "resources.pri" } | Select-Object -First 1
           if (-not $pri) { throw "resources.pri was not produced - resw files are not packaged" }
-          $pri | ForEach-Object { Write-Host ("PRI: {0} ({1} bytes)" -f $_.FullName, $_.Length) }
