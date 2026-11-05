@@ -131,4 +131,69 @@ internal sealed partial class Program
         var missingPause = await http.PostAsync($"{api.BaseUrl}tasks/99999/pause", content: null);
         Equal(HttpStatusCode.NotFound, missingPause.StatusCode, "未知任务 pause 应 404");
     }
+
+    // ── 25. 浏览器接管入口（P0-2：nettrans:// 解析 + 握手 token） ─────────
+    // 协议注册本体在 OS/UI 侧（文档化，不碰 WinUI）；内核保证解析与 token 校验。
+
+    private static Task NettransParseUnit()
+    {
+        var sha = new string('a', 64);
+        var ok = NettransLink.Parse($"nettrans://add?url=https%3A%2F%2Fcdn.example%2Fa%20b.zip&sha256={sha}&token=tok123", out var error);
+        That(ok is not null, $"合法链接应解析：{error}");
+        Equal("https://cdn.example/a b.zip", ok!.Url, "url 应解码还原");
+        Equal(sha, ok.Sha256, "sha256 应保留");
+        Equal("tok123", ok.Token, "token 应提取");
+        That(NettransLink.Parse("NETTRANS://ADD?url=https://x/y.zip&token=t", out _) is not null, "scheme/host 大小写不敏感");
+
+        That(NettransLink.Parse("https://not-nettrans/add?url=x&token=t", out error) is null, "错误 scheme 拒绝");
+        That(NettransLink.Parse("nettrans://open?url=x&token=t", out error) is null, "未知动作拒绝");
+        That(NettransLink.Parse("nettrans://add?sha256=x&token=t", out error) is null && error!.Contains("url"), "缺 url 拒绝");
+        That(NettransLink.Parse("nettrans://add?url=ftp://f/x.zip&token=t", out _) is not null, "ftp 直链允许");
+        That(NettransLink.Parse("nettrans://add?url=x.zip&token=t", out error) is null, "相对 url 拒绝");
+        That(NettransLink.Parse("nettrans://add?url=https://x/y.zip", out error) is null && error!.Contains("token"), "缺 token 拒绝");
+        That(NettransLink.Parse($"nettrans://add?url=https://x/y.zip&sha256=ZZ&token=t", out error) is null && error!.Contains("sha256"), "非法 sha256 拒绝");
+        That(NettransLink.Parse($"nettrans://add?url=https://x/y.zip&sha256={new string('g', 63)}&token=t", out error) is null && error!.Contains("sha256"), "63 位 sha256 拒绝");
+
+        return Task.CompletedTask;
+    }
+
+    private static async Task ControlApiNettransAsync(TestServer server)
+    {
+        server.Map("net/f.zip", server.RangeFile(Payload(64 * 1024)));
+        using var kernel = new RealDownloadKernel(new KernelOptions());
+        using var api = new LocalControlApi(kernel, preferredPort: 45310);
+        api.Start();
+        using var http = new HttpClient();
+
+        // 合法链接（token 匹配）→ 201，参数完整入队
+        var link = $"nettrans://add?url={Uri.EscapeDataString(server.Base + "net/f.zip")}" +
+                   $"&sha256={new string('B', 64)}&token={api.Token}&to={Uri.EscapeDataString(TempDir())}";
+        var body = JsonSerializer.Serialize(new { link });
+        var post = await http.PostAsync(api.BaseUrl + "links",
+            new StringContent(body, Encoding.UTF8, "application/json"));
+        Equal(HttpStatusCode.Created, post.StatusCode, "合法链接应 201");
+        var id = JsonDocument.Parse(await post.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt32();
+
+        var single = await http.GetAsync($"{api.BaseUrl}tasks/{id}");
+        var task = JsonDocument.Parse(await single.Content.ReadAsStringAsync()).RootElement;
+        Equal(server.Base + "net/f.zip", task.GetProperty("url").GetString(), "入队 URL 应与链接一致");
+        Equal(new string('b', 64), task.GetProperty("expectedHash").GetString(), "sha256 应大写归一为小写入 ExpectedHash");
+
+        // 无效 token → 403（防恶意页面伪造 nettrans:// 调用）
+        var bad = link.Replace($"token={api.Token}", "token=deadbeef");
+        var forbidden = await http.PostAsync(api.BaseUrl + "links",
+            new StringContent(JsonSerializer.Serialize(new { link = bad }), Encoding.UTF8, "application/json"));
+        Equal(HttpStatusCode.Forbidden, forbidden.StatusCode, "无效 token 应 403");
+
+        // 非 nettrans 链接 → 400
+        var wrong = await http.PostAsync(api.BaseUrl + "links",
+            new StringContent(JsonSerializer.Serialize(new { link = "https://example.com/x" }), Encoding.UTF8, "application/json"));
+        Equal(HttpStatusCode.BadRequest, wrong.StatusCode, "非 nettrans 链接应 400");
+
+        // 缺保存目录 → 400（内核不假设默认目录，UI 侧可预填）
+        var noDir = $"nettrans://add?url=https://x/y.zip&token={api.Token}";
+        var missing = await http.PostAsync(api.BaseUrl + "links",
+            new StringContent(JsonSerializer.Serialize(new { link = noDir }), Encoding.UTF8, "application/json"));
+        Equal(HttpStatusCode.BadRequest, missing.StatusCode, "缺 to（保存目录）应 400");
+    }
 }

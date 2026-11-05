@@ -89,6 +89,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("24a. 控制API：POST/GET/DELETE 任务 + 404", () => ControlApiBasicsAsync(server));
         await RunAsync("24b. 控制API：仅环回放行 + 非环回 403", () => ControlApiTrustAsync(server));
         await RunAsync("24c. 控制API：端口回退 + pause/resume/409", () => ControlApiPortAndToggleAsync(server));
+        await RunAsync("25a. nettrans:// 解析：参数/大小写/拒绝路径", () => NettransParseUnit());
+        await RunAsync("25b. nettrans:// 入队：token 校验/参数完整/拒绝", () => ControlApiNettransAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

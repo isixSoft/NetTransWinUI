@@ -37,11 +37,21 @@ public sealed class LocalControlApi : IDisposable
     private readonly Action<DownloadTask> _onRemoved;
     private TcpListener? _listener;
 
-    public LocalControlApi(IDownloadKernel kernel, int preferredPort, int fallbackCount = 10)
+    /// <summary>实际监听端口（Start 后有效）。</summary>
+    public int Port { get; private set; }
+
+    /// <summary>环回基址（Start 后有效），供调试与测试。</summary>
+    public string BaseUrl => $"http://127.0.0.1:{Port}/";
+
+    /// <summary>握手 token（nettrans:// 入口校验用；32 位十六进制，或构造时指定）。</summary>
+    public string Token { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+    public LocalControlApi(IDownloadKernel kernel, int preferredPort, int fallbackCount = 10, string? token = null)
     {
         _kernel = kernel;
         _preferredPort = preferredPort;
         _fallbackCount = fallbackCount;
+        if (token is not null) Token = token.ToLowerInvariant();
         _onAdded = t => _tasks[t.Id] = t;
         _onUpdated = t => _tasks[t.Id] = t;
         _onRemoved = t => _tasks.TryRemove(t.Id, out _);
@@ -49,12 +59,6 @@ public sealed class LocalControlApi : IDisposable
         _kernel.TaskUpdated += _onUpdated;
         _kernel.TaskRemoved += _onRemoved;
     }
-
-    /// <summary>实际监听端口（Start 后有效）。</summary>
-    public int Port { get; private set; }
-
-    /// <summary>环回基址（Start 后有效），供调试与测试。</summary>
-    public string BaseUrl => $"http://127.0.0.1:{Port}/";
 
     /// <summary>来源是否可信（仅环回：127.0.0.0/8 与 ::1）。</summary>
     public static bool IsLoopbackSource(string remoteAddress) =>
@@ -210,6 +214,60 @@ public sealed class LocalControlApi : IDisposable
 
     // ── 路由 ───────────────────────────────────────────────────────────────
 
+    /// <summary>POST /links：nettrans://add 链接解析入队（P0-2）。token 不符一律 403。</summary>
+    private async Task HandleNettransLinkAsync(string body, NetworkStream stream, CancellationToken cancellation)
+    {
+        string? link = null;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            link = document.RootElement.GetProperty("link").GetString();
+        }
+        catch
+        {
+            // JSON 坏/缺字段 → link 保持 null
+        }
+
+        if (string.IsNullOrWhiteSpace(link))
+        {
+            await WriteAsync(stream, 400, "{\"error\":\"缺少 link\"}", cancellation);
+            return;
+        }
+
+        var parsed = NettransLink.Parse(link, out var linkError);
+        if (parsed is null)
+        {
+            var message = JsonSerializer.Serialize(new { error = linkError ?? "链接无效" });
+            await WriteAsync(stream, 400, message, cancellation);
+            return;
+        }
+
+        if (!FixedTimeEquals(parsed.Token, Token))
+        {
+            await WriteAsync(stream, 403, "{\"error\":\"token 校验失败\"}", cancellation);
+            return;
+        }
+
+        if (parsed.SaveTo is not { Length: > 0 })
+        {
+            await WriteAsync(stream, 400, "{\"error\":\"缺少 to 参数（保存目录）\"}", cancellation);
+            return;
+        }
+
+        var task = _kernel.Add(new NewDownloadRequest(
+            parsed.Url, parsed.SaveTo, "", 2, TaskPriority.Normal, StartNow: true,
+            ExpectedHash: parsed.Sha256));
+        await WriteAsync(stream, 201, JsonSerializer.Serialize(new { id = task.Id }, JsonOptions), cancellation);
+    }
+
+    /// <summary>token 常时比较，避免时序侧信道。</summary>
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        var a = Encoding.UTF8.GetBytes(left);
+        var b = Encoding.UTF8.GetBytes(right);
+        return a.Length == b.Length && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
     private async Task RouteAsync(ControlRequest request, NetworkStream stream, CancellationToken cancellation)
     {
         var segments = request.Path.TrimStart('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -240,6 +298,12 @@ public sealed class LocalControlApi : IDisposable
         {
             var snapshot = _tasks.Values.OrderBy(t => t.Id).ToArray();
             await WriteAsync(stream, 200, JsonSerializer.Serialize(snapshot, JsonOptions), cancellation);
+            return;
+        }
+
+        if (request.Method == "POST" && segments.Length == 1 && segments[0] == "links")
+        {
+            await HandleNettransLinkAsync(request.Body, stream, cancellation);
             return;
         }
 
