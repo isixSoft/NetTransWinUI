@@ -109,4 +109,10 @@ public sealed class KernelOptions
     /// path completes the task. <see cref="EngineRunner"/> wins when both are set.
     /// </summary>
     public string? ExternalEngineCommand { get; set; }
+
+    /// <summary>
+    /// 站点提取器的 API 端点覆写（ISiteExtractor.Name → API 基址）：测试指向
+    /// 本地 fixture 服务器，也可用于反代加速。null/缺省 = 站点默认端点。
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? SiteApiBases { get; set; }
 }

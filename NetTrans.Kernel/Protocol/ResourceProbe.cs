@@ -14,6 +14,8 @@ namespace NetTrans.Kernel.Protocol;
 /// <param name="SuggestedProtocol">Set when the content itself says it is another protocol
 /// (a body sniffed as m3u8/mpd) so the registry can hand the probe to that driver.</param>
 /// <param name="Trackers">BT/PT tracker 展示列表（已过 SensitiveUrls.Mask 脱敏），非 BT 为 null。</param>
+/// <param name="ExtraHeaders">站点直链所需的附加头（Referer/UA 等）；内核并入传输会话，
+/// 压过默认与任务级同名字头——站点最懂自己的 CDN（与 yt-dlp 同策略）。</param>
 public sealed record ResourceProbe(
     string Name,
     long Size,
@@ -23,4 +25,5 @@ public sealed record ResourceProbe(
     DownloadProtocol Protocol,
     TransferPlan Plan,
     DownloadProtocol? SuggestedProtocol = null,
-    IReadOnlyList<string>? Trackers = null);
+    IReadOnlyList<string>? Trackers = null,
+    IReadOnlyDictionary<string, string>? ExtraHeaders = null);

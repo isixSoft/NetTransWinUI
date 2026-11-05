@@ -11,7 +11,7 @@ using NetTrans.Kernel.Transfer;
 namespace NetworkTests;
 
 /// <summary>
-/// NetTrans.Kernel 网络层测试（16 个方向）。断言全部基于内核源码与 BCL 的真实行为；
+/// NetTrans.Kernel 网络层测试（20 个方向，含站点提取器框架）。断言全部基于内核源码与 BCL 的真实行为；
 /// 确认的内核问题以"已知失败"标注，不强行 PASS。
 /// （历史注：2b filename 引号转义与 7b HLS 相对变体 URL 曾是已知内核缺陷，均已修复。）
 /// </summary>
@@ -72,6 +72,11 @@ internal sealed partial class Program : TestKit
         await RunAsync("19a. 小文件内存缓冲：完成前不落盘/无断点/暂停丢弃/目录自建", () => MemorySinkAsync(server));
         await RunAsync("19b. DirectSink 聚合：写合并正确性 + 乱序断续（单元）", DirectSinkUnitAsync);
         await RunAsync("19c. 真流式：无 ContentLength 的 HTTP 响应应完成", () => TrueStreamingAsync(server));
+        await RunAsync("20a. 站点框架：站点提取器优先于协议驱动 + 失败/放弃回退", () => SiteFrameworkAsync(server));
+        await RunAsync("20b. Bilibili 内核级：view+playurl 提取 → 下载完成（Referer/UA 必须在传）", () => BilibiliKernelAsync(server));
+        await RunAsync("20c. Bilibili 提取器单元：分P选择/画质标签/错误路径", () => BilibiliExtractorUnitAsync(server));
+        await RunAsync("20d. X/Twitter：变体排序与 registry 选择", () => TwitterAsync(server));
+        await RunAsync("20e. YouTube：直链格式选择/加密格式拒绝/404 顺延下一流", () => YouTubeAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

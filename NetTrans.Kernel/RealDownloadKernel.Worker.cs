@@ -232,7 +232,7 @@ public sealed partial class RealDownloadKernel
             Connections = Math.Clamp(task.Connections > 0 ? task.Connections : _options.ConnectionsPerTask, 1, 32),
             RetryCount = _options.RetryCount,
             SmallFileThresholdBytes = _options.SmallFileThresholdBytes,
-            Headers = headers,
+            Headers = WithSiteHeaders(headers, probe.ExtraHeaders),
             Checkpoint = LoadCheckpoint(savePath),
             CheckpointChanged = checkpoint => PersistCheckpoint(savePath, checkpoint),
             Log = (message, error) => Log(task, message, error),
@@ -319,6 +319,17 @@ public sealed partial class RealDownloadKernel
         if (runtime.Headers is not { Count: > 0 } extra) return _options.DefaultHeaders;
         var merged = new Dictionary<string, string>(_options.DefaultHeaders);
         foreach (var (name, value) in extra) merged[name] = value;
+        return merged;
+    }
+
+    /// <summary>站点直链必需头压过任务级同名字头：站点提取器最懂自己的 CDN
+    /// （缺 Referer 直接 403，与 yt-dlp 同策略）。</summary>
+    private static IReadOnlyDictionary<string, string> WithSiteHeaders(
+        IReadOnlyDictionary<string, string> headers, IReadOnlyDictionary<string, string>? siteHeaders)
+    {
+        if (siteHeaders is not { Count: > 0 }) return headers;
+        var merged = new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in siteHeaders) merged[name] = value;
         return merged;
     }
 
