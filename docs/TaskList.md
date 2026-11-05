@@ -3,6 +3,7 @@
 > 来源：[FeatureSpec.md](FeatureSpec.md)（对标 9 款同类软件，2026-11-05 调研）。
 > 执行纪律：每圈严格 **先写测试（红）→ 最小实现（绿）→ 11 套件全量回归 → 提交推送**。
 > 约束延续：Kernel/测试零 NuGet、net8.0 BCL；不碰 WinUI 工程；中文注释英文代码；提交署名 isixSoft + Co-authored-by traeagent。
+> 进度：圈 1–13（P0 全部 + P1 全部）已完成并推送（HEAD 24ce35d）。P2 依序提圈，见下表。
 
 ## TDD 圈（按依赖与可测性排序）
 
@@ -25,6 +26,12 @@
 ## Backlog（P2，按需启动，不排圈）
 
 P2-1 Metalink4 · P2-2 限速档位 · P2-3 文件名模板 · P2-4 Mark-of-the-Web（Windows-only 测试跳过）· P2-5 ZIP 部分下载 · P2-6 站点批量抓取 · P2-7 哈希展示比对 · P2-8 过期链接刷新 · P2-9 多语言基础设施。
+
+## P2 TDD 圈（按依赖与可测性排序，延续同纪律）
+
+| 圈 | 条目 | 测试落点 | 关键测试先行内容 |
+| --- | --- | --- | --- |
+| 14 | P2-1 Metalink4（`.meta4/.metalink` → file/size/hash/url；镜像探测期验尺寸；内嵌哈希作期望指纹） | NetworkTests/ChecksumsAndPrivacy.cs 增段 | fixture meta4：priority 定主源+镜像列表+Size/Name/Hash；全链路下载完成且「SHA-256 已校验」；尺寸不符镜像被剔除 |
 
 ## 明确不做
 
