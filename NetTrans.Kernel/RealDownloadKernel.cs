@@ -57,6 +57,9 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         /// <summary>磁盘空间预检（P1-3）：因空间不足被拦下的任务，tick 自动探测恢复。</summary>
         public bool SpaceBlocked;
 
+        /// <summary>ZIP 部分下载（P2-5）：非空时该任务走成员传输路径，跳过探测/TransferSession。</summary>
+        public string? ZipEntryName;
+
         /// <summary>
         /// Save path fixed at the first start, after the probe names the file:
         /// every later start/resume of the same task writes to this exact path,
@@ -514,7 +517,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
 
     private static DownloadTask BuildTask(int id, NewDownloadRequest request)
     {
-        string name = FileNameFrom(request.Url);
+        string name = request.NameOverride is { Length: > 0 } ? request.NameOverride : FileNameFrom(request.Url);
         var kind = KindFrom(name);
         var isTorrent = ProtocolDetector.Detect(request.Url) == DownloadProtocol.BitTorrent;
 

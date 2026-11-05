@@ -15,6 +15,8 @@ namespace NetTrans.Kernel;
 /// 显式 Headers["Cookie"] 优先，全局 KernelOptions.CookieFile 兜底。null = 不导入。</param>
 /// <param name="SelectedFiles">BT per-file 选择（P1-6）：种子 info.files 的 1-based 索引
 /// （aria2 --select-file 语义，按勾选顺序透传）；null/空 = 不选择（{files} 展开为空）。</param>
+/// <param name="NameOverride">任务初始文件名（P2-5 ZIP 成员）：空 = URL 文件名；
+/// Kind/Category 由该名推导，使任务一开始就展示目标成员。</param>
 public sealed record NewDownloadRequest(
     string Url,
     string SaveTo,
@@ -31,4 +33,5 @@ public sealed record NewDownloadRequest(
     string? OnCompleteCommand = null,
     string Queue = "",
     string? CookieFile = null,
-    IReadOnlyList<int>? SelectedFiles = null);
+    IReadOnlyList<int>? SelectedFiles = null,
+    string? NameOverride = null);

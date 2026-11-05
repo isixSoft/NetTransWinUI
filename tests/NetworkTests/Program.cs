@@ -111,6 +111,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("33b. 文件名模板：段内非法字符替换为下划线", () => NameTemplateSanitizesAsync(server));
         await RunAsync("34a. Mark-of-the-Web：完成时写 Zone.Identifier（ZoneId=3）", () => MarkOfTheWebWrittenAsync(server));
         await RunAsync("34b. Mark-of-the-Web：开关关闭后无标记", () => MarkOfTheWebDisabledAsync(server));
+        await RunAsync("35a. ZIP 部分下载：central directory 解析（store+deflate 10 成员）", () => ZipIndexParsesCentralDirectoryAsync(server));
+        await RunAsync("35b. ZIP 部分下载：按成员 Range 下载解压，字节数远小于整包", () => ZipMemberDownloadAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

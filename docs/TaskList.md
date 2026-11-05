@@ -32,6 +32,10 @@ P2-1 Metalink4 · P2-2 限速档位 · P2-3 文件名模板 · P2-4 Mark-of-the-
 | 圈 | 条目 | 测试落点 | 关键测试先行内容 |
 | --- | --- | --- | --- |
 | 14 | P2-1 Metalink4（`.meta4/.metalink` → file/size/hash/url；镜像探测期验尺寸；内嵌哈希作期望指纹） | NetworkTests/ChecksumsAndPrivacy.cs 增段 | fixture meta4：priority 定主源+镜像列表+Size/Name/Hash；全链路下载完成且「SHA-256 已校验」；尺寸不符镜像被剔除 |
+| 15 | P2-2 限速档位（SpeedProfileService + SetGlobalSpeedLimit 即时生效） | SetupTests 增契约 + NetworkTests/ResilienceAndLimits.cs 32a | 切换档位委托下发正确字节值；未知档位不动内核；中途切 null 总耗时 <6.5s（已完 c2bcea4） |
+| 16 | P2-3 文件名模板（{站点}/{标题}.{ext}，非法字符替换，冲突沿用既有命名） | SetupTests 16 契约 + NetworkTests/KernelLifecycle.cs 33a/33b | 模板渲染落盘名一致；模板子目录落盘；段内非法字符→'_'（已完 a8936bf） |
+| 17 | P2-4 Mark-of-the-Web（完成时写 Zone.Identifier，开关可关；POSIX 伴随文件使测试免跳过） | SetupTests 17 映射 + NetworkTests/KernelLifecycle.cs 34a/34b | 默认完成文件带 ZoneId=3 标记；关闭后无标记（已完 4fe4e9b） |
+| 18 | P2-5 ZIP 部分下载（ZipIndex 解析 central directory + AddZipMember 成员传输，Range 只拉 EOCD/CD/成员段） | NetworkTests/ZipPartial.cs 35a/35b | CD 解析（store+deflate 10 成员）；按成员解压正确且字节远小于整包；未知成员入 Error（已完） |
 
 ## 明确不做
 

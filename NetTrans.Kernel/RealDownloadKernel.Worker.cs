@@ -69,39 +69,47 @@ public sealed partial class RealDownloadKernel
         TransferSession? session = null;
         try
         {
-            Log(task, "正在探测资源…");
-            var headers = HeadersFor(runtime, task.Url);
-            var probe = await _drivers.ProbeAsync(
-                task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
-            if (runtime.Removed)
+            if (runtime.ZipEntryName is { } zipEntry)
             {
-                // removed mid-probe: fall through to the settle block so the
-                // slot is released and the queue wakes up — an early return
-                // here used to leak a MaxSimultaneous slot forever
-                outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
+                // ZIP 部分下载（P2-5）：任务创建时已知目标成员，跳过探测直接传输
+                outcome = await TransferZipMemberAsync(task, runtime, zipEntry, cts.Token);
             }
             else
             {
-                ApplyProbe(task, probe);
-                if (CheckSpace(task) is { } spaceError)
+                Log(task, "正在探测资源…");
+                var headers = HeadersFor(runtime, task.Url);
+                var probe = await _drivers.ProbeAsync(
+                    task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
+                if (runtime.Removed)
                 {
-                    // 磁盘空间预检（P1-3）：不足不进运行态，tick 每次自动探测恢复。
-                    // outcome 走 Paused：不算传输失败、不计重试，只等空间释放。
-                    runtime.SpaceBlocked = true;
-                    lock (_gate)
-                    {
-                        task.Status = DownloadStatus.Error;
-                        task.ErrorMessage = spaceError;
-                    }
-                    Log(task, spaceError, isError: true);
+                    // removed mid-probe: fall through to the settle block so the
+                    // slot is released and the queue wakes up — an early return
+                    // here used to leak a MaxSimultaneous slot forever
                     outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
                 }
                 else
                 {
-                    session = CreateSession(task, runtime, probe, headers);
-                    runtime.Session = session;
-                    Log(task, DescribePlan(probe));
-                    outcome = await session.RunAsync(cts.Token);
+                    ApplyProbe(task, probe);
+                    if (CheckSpace(task) is { } spaceError)
+                    {
+                        // 磁盘空间预检（P1-3）：不足不进运行态，tick 每次自动探测恢复。
+                        // outcome 走 Paused：不算传输失败、不计重试，只等空间释放。
+                        runtime.SpaceBlocked = true;
+                        lock (_gate)
+                        {
+                            task.Status = DownloadStatus.Error;
+                            task.ErrorMessage = spaceError;
+                        }
+                        Log(task, spaceError, isError: true);
+                        outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
+                    }
+                    else
+                    {
+                        session = CreateSession(task, runtime, probe, headers);
+                        runtime.Session = session;
+                        Log(task, DescribePlan(probe));
+                        outcome = await session.RunAsync(cts.Token);
+                    }
                 }
             }
         }
