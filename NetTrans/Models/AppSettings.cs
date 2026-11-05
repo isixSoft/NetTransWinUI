@@ -37,6 +37,9 @@ public sealed class AppSettings
     // 行为
     public bool WatchClipboard { get; set; } = true;
     public bool NotifyOnCompletion { get; set; } = true;
+
+    /// <summary>Mark-of-the-Web（P2-4）：完成时写 Zone.Identifier 来源标记，可关闭。</summary>
+    public bool MarkOfTheWeb { get; set; } = true;
     public bool VerifyChecksums { get; set; } = true;
     public bool ScanOnCompletion { get; set; } = true;
     public bool EdgeHide { get; set; } = true;

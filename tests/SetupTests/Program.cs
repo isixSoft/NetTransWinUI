@@ -36,6 +36,7 @@ internal static class Program
         Run("14. 系统通知开关映射：NotifyOnCompletion → NotifyOnComplete", NotifyOnCompleteMapping);
         Run("15. 限速档位：默认档位/Resolve/Switch 即时下发/未知档位不动内核/往返持久化", SpeedProfilesContract);
         Run("16. 文件名模板：占位符渲染/非法字符/未知占位符/空模板回退/工厂映射", FileNameTemplateContract);
+        Run("17. Mark-of-the-Web 开关映射：MarkOfTheWeb → 内核", MarkOfTheWebMapping);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -405,6 +406,17 @@ internal static class Program
         Equal("{站点}/{标题}.{ext}",
             KernelOptionsFactory.Create(new AppSettings { NameTemplate = "{站点}/{标题}.{ext}" }).NameTemplate,
             "NameTemplate 原样映射");
+    }
+
+    // ── 17. Mark-of-the-Web 开关映射（P2-4） ──────────────────────────────
+
+    private static void MarkOfTheWebMapping()
+    {
+        That(KernelOptionsFactory.Create(new AppSettings()).MarkOfTheWeb, "默认设置 → 来源标记开");
+        That(!KernelOptionsFactory.Create(new AppSettings { MarkOfTheWeb = false }).MarkOfTheWeb,
+            "MarkOfTheWeb=false → 内核来源标记关");
+        That(KernelOptionsFactory.Create(new AppSettings { MarkOfTheWeb = true }).MarkOfTheWeb,
+            "MarkOfTheWeb=true → 内核来源标记开");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

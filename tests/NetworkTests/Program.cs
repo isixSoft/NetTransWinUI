@@ -109,6 +109,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("32a. 限速档位：SetGlobalSpeedLimit(null) 中途切换立即生效", () => GlobalSwitchMidwayAsync(server));
         await RunAsync("33a. 文件名模板：{站点}/{标题}.{ext} 落盘到模板子目录", () => NameTemplateRendersAsync(server));
         await RunAsync("33b. 文件名模板：段内非法字符替换为下划线", () => NameTemplateSanitizesAsync(server));
+        await RunAsync("34a. Mark-of-the-Web：完成时写 Zone.Identifier（ZoneId=3）", () => MarkOfTheWebWrittenAsync(server));
+        await RunAsync("34b. Mark-of-the-Web：开关关闭后无标记", () => MarkOfTheWebDisabledAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

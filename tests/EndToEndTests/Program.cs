@@ -106,7 +106,8 @@ internal sealed class Program : TestKit
         That(task.Status == DownloadStatus.Completed, "恢复后任务应为 Completed");
         That(task.Log.Any(l => l.Message.Contains("已从断点恢复")), "日志应包含「已从断点恢复」");
         That(File.ReadAllBytes(Path.Combine(dir, "resume.bin")).AsSpan().SequenceEqual(data), "恢复后文件字节应完整");
-        That(Directory.GetFiles(dir).Length == 1, "续传应写回原文件，不应产生防碰撞副本");
+        That(Directory.GetFiles(dir).Count(f => !f.EndsWith(":Zone.Identifier")) == 1,
+            "续传应写回原文件，不应产生防碰撞副本（Zone.Identifier 来源标记不计）");
         That(!File.Exists(checkpoint), "完成后 checkpoint 应被清除");
     }
 

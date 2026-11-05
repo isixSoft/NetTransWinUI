@@ -32,6 +32,7 @@ public static class KernelOptionsFactory
             NameTemplate = settings.NameTemplate,
             UncappedAtNight = settings.UncappedAtNight,
             NotifyOnComplete = settings.NotifyOnCompletion,
+            MarkOfTheWeb = settings.MarkOfTheWeb,
             OffPeakStart = settings.OffPeakStart,
             OffPeakEnd = settings.OffPeakEnd,
             // 本地签名库跟着下载根目录走（.nettrans-checksums.json）；

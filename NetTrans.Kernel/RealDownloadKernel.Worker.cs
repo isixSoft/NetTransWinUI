@@ -185,6 +185,7 @@ public sealed partial class RealDownloadKernel
         if (raiseCompleted)
         {
             await VerifyChecksumAsync(task, runtime);
+            ZoneMarker.Write(_options, TargetPathFor(task, runtime));
             TaskCompleted?.Invoke(task);
             CompletionNotifications.Emit(_options, task);
             await RunCompletionActionsAsync(task, runtime);

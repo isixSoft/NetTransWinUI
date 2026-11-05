@@ -78,6 +78,13 @@ public sealed class KernelOptions
     public string NameTemplate { get; set; } = "";
 
     /// <summary>
+    /// Mark-of-the-Web（P2-4）：write a Zone.Identifier mark next to the
+    /// completed file (an NTFS ADS on Windows) so shells can treat it as
+    /// "downloaded from the Internet". On by default, user opt-out.
+    /// </summary>
+    public bool MarkOfTheWeb { get; set; } = true;
+
+    /// <summary>
     /// 「夜间不限速」：while the wall clock is inside the off-peak window
     /// (<see cref="OffPeakStart"/>…<see cref="OffPeakEnd"/>) the global speed
     /// cap is lifted; per-task limits still apply.

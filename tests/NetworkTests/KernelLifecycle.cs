@@ -551,4 +551,38 @@ internal sealed partial class Program
         Equal(Hash(data), Hash(File.ReadAllBytes(expected)), "非法字符替换路径下字节应完整");
     }
 
+    // ── 34. Mark-of-the-Web（P2-4：完成时写 Zone.Identifier 来源标记） ────
+
+    private static async Task MarkOfTheWebWrittenAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("motw/on.bin", server.RangeFile(data));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "motw/on.bin", dir, "", 1, TaskPriority.Normal, StartNow: true));
+
+        await WaitSignalAsync(completed.Task, "任务应完成", 60_000);
+        var target = Path.Combine(dir, "on.bin");
+        That(File.Exists(target), "目标文件应存在");
+        var ads = target + ":Zone.Identifier";
+        That(File.Exists(ads), "完成文件应有 Zone.Identifier 来源标记（POSIX 下为同名伴随文件）");
+        That(File.ReadAllText(ads).Contains("ZoneId=3"), "标记内容应含 ZoneId=3（来自 Internet）");
+    }
+
+    private static async Task MarkOfTheWebDisabledAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("motw/off.bin", server.RangeFile(data));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { MarkOfTheWeb = false, ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "motw/off.bin", dir, "", 1, TaskPriority.Normal, StartNow: true));
+
+        await WaitSignalAsync(completed.Task, "任务应完成", 60_000);
+        That(!File.Exists(Path.Combine(dir, "off.bin") + ":Zone.Identifier"), "开关关闭后不应写来源标记");
+    }
+
 }
