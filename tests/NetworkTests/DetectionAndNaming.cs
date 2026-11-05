@@ -80,4 +80,118 @@ internal sealed partial class Program
         Equal("dir", probe.Name, "URL 以 / 结尾时应回退到最后一段目录名");
     }
 
+    // ── 26. Cookie 导入（P1-1）：Netscape 解析 + 按域注入 ───────────────────
+
+    private static Task CookieParseUnitAsync()
+    {
+        var soon = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var stale = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds();
+        var content = string.Join('\n',
+            "# Netscape HTTP Cookie File（注释行应跳过）",
+            "",
+            $".example.com\tTRUE\t/\tFALSE\t{soon}\tsessionid\tabc123",
+            $"#HttpOnly_.example.com\tTRUE\t/\tTRUE\t{soon}\thttponly_tok\th!!j",
+            $"other.net\tFALSE\t/\tFALSE\t{soon}\tother\tx",
+            $"127.0.0.1\tFALSE\t/\tFALSE\t{stale}\texpired\tgone",
+            $"127.0.0.1\tFALSE\t/\tFALSE\t0\tsession\ts1",
+            "这行不是 cookie 数据",
+            $"127.0.0.1\tFALSE\t/\tFALSE\t{soon}\tplain\tv v");
+
+        var cookies = NetscapeCookies.Parse(content);
+        Equal(5, cookies.Count, $"应解析出 5 条有效 cookie（实际 {cookies.Count}）");
+
+        // RFC 6265：secure cookie 仅随 https 发送。子域断言走 https（两条都该在），
+        // 裸域断言走 http（secure 的 httponly_tok 必须被剔除，只剩 sessionid）。
+        var header = NetscapeCookies.HeaderFor(cookies, new Uri("https://www.example.com/v/file.bin"));
+        That(header is not null && header.Contains("sessionid=abc123") && header.Contains("httponly_tok=h!!j"),
+            $"example.com 子域 https 请求应带两条 .example.com cookie，#HttpOnly_ 行必须可用（实际「{header}」）");
+        That(!header!.Contains("other="), "其他域 cookie 不得注入");
+
+        Equal("sessionid=abc123", NetscapeCookies.HeaderFor(cookies, new Uri("http://example.com/")),
+            "裸域也应匹配 .example.com 的 domain cookie，且 http 不得携带 secure cookie");
+
+        var local = NetscapeCookies.HeaderFor(cookies, new Uri("http://127.0.0.1/x/file.bin"));
+        That(local is not null && local.Contains("session=s1") && local.Contains("plain=v v"),
+            $"本地域应保留 session(0) 与普通 cookie（实际「{local}」）");
+        That(!local!.Contains("expired=gone"), "过期 cookie 必须剔除");
+
+        Equal(null, NetscapeCookies.HeaderFor(new List<NetscapeCookie>(), new Uri("http://example.com/")),
+            "空集 → null");
+        Equal(0, NetscapeCookies.Parse("   \n# 只有一行注释\n").Count, "空内容 → 0 条");
+        return Task.CompletedTask;
+    }
+
+    private static async Task CookieInjectAsync(TestServer server)
+    {
+        var data = Payload(24 * 1024);
+        var file = server.RangeFile(data, etag: "\"cookie-1\"");
+        string? seenCookie = null;
+        server.Map("cookie/file.bin", ctx =>
+        {
+            seenCookie = ctx.Request.Headers["Cookie"];
+            file(ctx);
+        });
+
+        var soon = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var taskCookiePath = Path.Combine(TempDir(), "cookies.txt");
+        File.WriteAllText(taskCookiePath, string.Join('\n',
+            "# Netscape HTTP Cookie File",
+            $"127.0.0.1\tFALSE\t/\tFALSE\t{soon}\tsessionid\tabc123",
+            $"example.com\tFALSE\t/\tFALSE\t{soon}\twrongdom\tno"));
+        var globalCookiePath = Path.Combine(TempDir(), "global-cookies.txt");
+        File.WriteAllText(globalCookiePath,
+            $"127.0.0.1\tFALSE\t/\tFALSE\t{soon}\tglobal\tyes");
+
+        // 任务级 CookieFile：请求按域携带 Cookie 头（只含本域 cookie）
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, CookieFile: taskCookiePath));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "带 cookie 文件的任务应完成", 30_000);
+            Equal("sessionid=abc123", seenCookie, $"请求头应携带按域匹配的 Cookie（实际「{seenCookie}」）");
+        }
+
+        // 无 cookie 文件：不发 Cookie 头
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "无 cookie 任务应完成", 30_000);
+            That(string.IsNullOrEmpty(seenCookie), $"无 cookie 文件时不应携带 Cookie 头（实际「{seenCookie}」）");
+        }
+
+        // 任务显式 Cookie 头优先于 cookie 文件
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, CookieFile: taskCookiePath,
+                Headers: new Dictionary<string, string> { ["Cookie"] = "manual=1" }));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "显式头任务应完成", 30_000);
+            Equal("manual=1", seenCookie, "任务显式 Cookie 头应优先于 cookie 文件");
+        }
+
+        // 全局 CookieFile 注入；任务级文件优先于全局文件
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, CookieFile = globalCookiePath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "全局 cookie 任务应完成", 30_000);
+            Equal("global=yes", seenCookie, "全局 CookieFile 应按域注入");
+        }
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1, CookieFile = globalCookiePath }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, CookieFile: taskCookiePath));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "任务级+全局共存任务应完成", 30_000);
+            Equal("sessionid=abc123", seenCookie, "任务级 cookie 文件应优先于全局");
+        }
+
+        // cookie 文件缺失/损坏：静默降级，任务照常完成
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "cookie/file.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true, CookieFile: Path.Combine(TempDir(), "missing.txt")));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "cookie 文件缺失任务应照常完成", 30_000);
+        }
+    }
 }

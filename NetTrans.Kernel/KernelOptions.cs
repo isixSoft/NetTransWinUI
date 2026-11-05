@@ -35,6 +35,12 @@ public sealed class KernelOptions
         new Dictionary<string, string>();
 
     /// <summary>
+    /// 全局 Netscape cookies.txt（P1-1 Cookie 导入）：按域匹配为请求注入 Cookie 头；
+    /// 任务级 NewDownloadRequest.CookieFile 优先，显式 Cookie 头最优先。null = 不注入。
+    /// </summary>
+    public string? CookieFile { get; set; }
+
+    /// <summary>
     /// Mirror slot: given a primary URL, return candidate mirror URLs
     /// (GitHub / HuggingFace-style acceleration). Each candidate is probed and
     /// only those serving the identical resource (same size, agreeing etag)

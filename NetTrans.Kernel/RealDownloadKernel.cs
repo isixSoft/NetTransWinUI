@@ -44,6 +44,9 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         public required DownloadTask Task { get; init; }
         public SpeedLimiter Limiter { get; } = new();
         public IReadOnlyDictionary<string, string>? Headers { get; init; }
+
+        /// <summary>任务级 Cookie 文件（P1-1）；null 时回退 KernelOptions.CookieFile。</summary>
+        public string? CookieFile { get; init; }
         public CancellationTokenSource? Cts;
         public TransferSession? Session;
         public long LastDone;
@@ -173,6 +176,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
             {
                 Task = task,
                 Headers = request.Headers,
+                CookieFile = request.CookieFile,
                 OnComplete = request.OnComplete,
                 OnCompleteCommand = request.OnCompleteCommand,
             };

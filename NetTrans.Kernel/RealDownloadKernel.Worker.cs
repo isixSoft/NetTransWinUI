@@ -69,7 +69,7 @@ public sealed partial class RealDownloadKernel
         try
         {
             Log(task, "正在探测资源…");
-            var headers = HeadersFor(runtime);
+            var headers = HeadersFor(runtime, task.Url);
             var probe = await _drivers.ProbeAsync(
                 task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
             if (runtime.Removed)
@@ -373,11 +373,33 @@ public sealed partial class RealDownloadKernel
         }
     }
 
-    private IReadOnlyDictionary<string, string> HeadersFor(Runtime runtime)
+    private IReadOnlyDictionary<string, string> HeadersFor(Runtime runtime, string url)
     {
-        if (runtime.Headers is not { Count: > 0 } extra) return _options.DefaultHeaders;
         var merged = new Dictionary<string, string>(_options.DefaultHeaders);
-        foreach (var (name, value) in extra) merged[name] = value;
+        if (runtime.Headers is { Count: > 0 } extra)
+        {
+            foreach (var (name, value) in extra) merged[name] = value;
+        }
+
+        // Cookie 导入（P1-1）：任务级文件优先于全局，显式 Cookie 头最优先；
+        // 文件缺失/损坏静默降级——cookie 只是助力，不能挡住下载本身。
+        var cookieFile = runtime.CookieFile ?? _options.CookieFile;
+        bool hasExplicitCookie = merged.Keys.Any(
+            k => k.Equals("Cookie", StringComparison.OrdinalIgnoreCase));
+        if (cookieFile is not null && !hasExplicitCookie)
+        {
+            try
+            {
+                var header = NetscapeCookies.HeaderFor(
+                    NetscapeCookies.Parse(File.ReadAllText(cookieFile)), new Uri(url));
+                if (header is not null) merged["Cookie"] = header;
+            }
+            catch
+            {
+                // 静默：无有效 cookie 就按无 cookie 下载
+            }
+        }
+
         return merged;
     }
 

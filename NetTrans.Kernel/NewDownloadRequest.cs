@@ -11,6 +11,8 @@ namespace NetTrans.Kernel;
 /// <param name="OnComplete">任务级「完成后动作」；None = 无（全局 AllComplete 仍可能收尾触发）。</param>
 /// <param name="OnCompleteCommand">OnComplete = RunCommand 的命令模板（{path} {name} 占位符）。</param>
 /// <param name="Queue">队列分组名（P0-3）；空 = 不属于任何命名队列，定时调度不触碰。</param>
+/// <param name="CookieFile">Netscape cookies.txt 路径（P1-1）：按域匹配注入 Cookie 头；
+/// 显式 Headers["Cookie"] 优先，全局 KernelOptions.CookieFile 兜底。null = 不导入。</param>
 public sealed record NewDownloadRequest(
     string Url,
     string SaveTo,
@@ -25,4 +27,5 @@ public sealed record NewDownloadRequest(
     int? SeedHours = null,
     AfterCompletion OnComplete = AfterCompletion.None,
     string? OnCompleteCommand = null,
-    string Queue = "");
+    string Queue = "",
+    string? CookieFile = null);

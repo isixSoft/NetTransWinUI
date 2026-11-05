@@ -93,6 +93,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("24c. 控制API：端口回退 + pause/resume/409", () => ControlApiPortAndToggleAsync(server));
         await RunAsync("25a. nettrans:// 解析：参数/大小写/拒绝路径", () => NettransParseUnit());
         await RunAsync("25b. nettrans:// 入队：token 校验/参数完整/拒绝", () => ControlApiNettransAsync(server));
+        await RunAsync("26a. Cookie 导入：Netscape 解析（#HttpOnly_/过期/域匹配）", CookieParseUnitAsync);
+        await RunAsync("26b. Cookie 注入：任务级/全局/显式头优先/缺失降级", () => CookieInjectAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
