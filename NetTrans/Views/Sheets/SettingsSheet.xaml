@@ -22,6 +22,11 @@
                         <controls:IosSwitch x:Name="FoldersSwitch" Toggled="OnFoldersToggled"/>
                     </controls:FormRow>
 
+                    <controls:FormRow Label="文件名模板">
+                        <TextBox x:Name="NameTemplateBox" Width="200" Style="{StaticResource FormTextBoxStyle}"
+                                 PlaceholderText="默认自动命名" TextChanged="OnNameTemplateChanged"/>
+                    </controls:FormRow>
+
                     <controls:FormRow Label="同时下载">
                         <ComboBox x:Name="ConcurrencyBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnConcurrencyChanged">
                             <x:String>1</x:String>
@@ -39,6 +44,11 @@
                             <x:String>1 MB/s</x:String>
                             <x:String>256 KB/s</x:String>
                         </ComboBox>
+                    </controls:FormRow>
+
+                    <controls:FormRow Label="限速档位">
+                        <!-- items come from SpeedProfileService.Profiles in code-behind -->
+                        <ComboBox x:Name="ProfileBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnProfileChanged"/>
                     </controls:FormRow>
 
                     <controls:FormRow Label="夜间不限速">
@@ -80,6 +90,10 @@
 
                     <controls:FormRow Label="完成后通知">
                         <controls:IosSwitch x:Name="NotifySwitch" Toggled="OnNotifyToggled"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow Label="完成时标记来源">
+                        <controls:IosSwitch x:Name="MotwSwitch" Toggled="OnMotwToggled"/>
                     </controls:FormRow>
 
                     <controls:FormRow Label="完成后校验 SHA-256">

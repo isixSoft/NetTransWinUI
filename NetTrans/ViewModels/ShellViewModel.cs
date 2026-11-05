@@ -62,6 +62,10 @@ public sealed partial class ShellViewModel : ObservableObject
 
         _clipboardWatcher.UrlDetected += OnClipboardUrlDetected;
         if (Settings.WatchClipboard) _clipboardWatcher.Start();
+
+        // 限速档位（P2-2）：恢复上次选择的非默认档位；「全速」交给
+        // KernelOptionsFactory 启动时映射的旧全局限速值。
+        new SpeedProfileService(Settings).Restore(Manager.SetGlobalSpeedLimit);
     }
 
     // ── list state ────────────────────────────────────────────────────────

@@ -90,6 +90,12 @@ public class TaskManager<TItem>
     public void SetPriority(int id, TaskPriority priority) => Command(() => _kernel.SetPriority(id, priority));
     public void SetSpeedLimit(int id, string limit) => Command(() => _kernel.SetSpeedLimit(id, limit));
 
+    /// <summary>
+    /// Global cap passthrough for the 设置 sheet's 限速档位 switch (P2-2) -- views
+    /// never touch the kernel directly, per the seam rule above.
+    /// </summary>
+    public void SetGlobalSpeedLimit(long? bytesPerSecond) => Command(() => _kernel.SetGlobalSpeedLimit(bytesPerSecond));
+
     /// <summary>Runs a kernel command, then refreshes the aggregates at once -- the way the old engine recomputed after each command.</summary>
     private void Command(Action action)
     {

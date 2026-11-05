@@ -219,6 +219,19 @@ Section("TaskManager · commands forward intent and re-apply the snapshot");
         $"speed={manager.TotalSpeed}");
 }
 
+Section("TaskManager · SetGlobalSpeedLimit forwards the 限速档位 cap");
+{
+    var kernel = new FakeKernel();
+    var manager = NewManager(kernel, new TestDispatcher());
+
+    manager.SetGlobalSpeedLimit(1048576L); // 浏览优先 1 MiB/s
+    manager.SetGlobalSpeedLimit(null);     // 全速
+
+    Check("the global cap reaches the kernel as bytes, then as unlimited",
+        string.Join('|', kernel.Calls) == "SetGlobalSpeedLimit:1048576|SetGlobalSpeedLimit:null",
+        $"calls={string.Join('|', kernel.Calls)}");
+}
+
 Section("TaskManager · Add() on a deferred dispatcher (non-UI callers)");
 {
     var kernel = new FakeKernel();

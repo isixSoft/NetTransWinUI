@@ -40,4 +40,13 @@ public sealed class SpeedProfileService
         _settings.ActiveSpeedProfile = profile.Name;
         return true;
     }
+
+    /// <summary>
+    /// 启动时恢复上次档位（设置页接线）：非默认「全速」才经委托下发——「全速」
+    /// 交由 KernelOptionsFactory 映射的旧全局限速值，避免启动时清掉精细限速。
+    /// 记录的档位已不存在时走 <see cref="Switch"/> 的失败路径，内核与状态都不动。
+    /// </summary>
+    public bool Restore(Action<long?> applyKernelLimit) =>
+        _settings.ActiveSpeedProfile is not ("" or "全速") &&
+        Switch(_settings.ActiveSpeedProfile, applyKernelLimit);
 }

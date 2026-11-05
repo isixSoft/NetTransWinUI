@@ -38,6 +38,7 @@ internal static class Program
         Run("16. 文件名模板：占位符渲染/非法字符/未知占位符/空模板回退/工厂映射", FileNameTemplateContract);
         Run("17. Mark-of-the-Web 开关映射：MarkOfTheWeb → 内核", MarkOfTheWebMapping);
         Run("18. 哈希展示比对：三算法已知向量/长度识别算法/清洗匹配/两值展示/非法输入 null", HashCompareContract);
+        Run("19. 启动恢复档位：非默认档位下发/全速·空·未知档位不动内核", SpeedProfileRestoreContract);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -373,6 +374,38 @@ internal static class Program
         Equal("夜间小水管", loaded.SpeedProfiles[0].Name, "往返后档位名");
         Equal(262144L, loaded.SpeedProfiles[0].BytesPerSecond, "往返后档位限速值");
         Equal("夜间小水管", loaded.ActiveSpeedProfile, "往返后当前档位");
+    }
+
+    // ── 19. 启动恢复档位（设置页三件套接线） ──────────────────────────────
+
+    private static void SpeedProfileRestoreContract()
+    {
+        // 上次选了「浏览优先」：启动恢复应把 1 MiB/s 下发内核
+        var settings = new AppSettings { ActiveSpeedProfile = "浏览优先" };
+        var service = new SpeedProfileService(settings);
+        long? applied = 42L;
+        That(service.Restore(v => applied = v), "非默认档位启动恢复应成功");
+        Equal(1048576L, applied, "恢复应把档位字节值下发给内核委托");
+        Equal("浏览优先", settings.ActiveSpeedProfile, "恢复不改当前档位名");
+
+        // 默认「全速」：不下发——内核保持 KernelOptionsFactory 映射的旧全局限速值
+        var plain = new SpeedProfileService(new AppSettings());
+        applied = 42L;
+        That(!plain.Restore(v => applied = v), "默认全速不应下发内核");
+        Equal(42L, applied, "全速启动恢复不得触碰内核委托");
+
+        // 空档位名：同样不下发
+        var blank = new SpeedProfileService(new AppSettings { ActiveSpeedProfile = "" });
+        applied = 42L;
+        That(!blank.Restore(v => applied = v), "空档位名不应下发内核");
+        Equal(42L, applied, "空档位名不得触碰内核委托");
+
+        // 记录的档位已不存在（如自定义列表被清空）：Switch 失败路径，状态不动
+        var staleSettings = new AppSettings { ActiveSpeedProfile = "已删档位" };
+        applied = 42L;
+        That(!new SpeedProfileService(staleSettings).Restore(v => applied = v), "未知档位启动恢复应失败");
+        Equal(42L, applied, "未知档位不得触碰内核委托");
+        Equal("已删档位", staleSettings.ActiveSpeedProfile, "失败的恢复不改当前档位名");
     }
 
     // ── 16. 文件名模板（P2-3） ────────────────────────────────────────────

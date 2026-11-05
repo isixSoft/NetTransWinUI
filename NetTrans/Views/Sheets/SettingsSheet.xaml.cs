@@ -8,6 +8,7 @@ namespace NetTrans.Views.Sheets;
 public sealed partial class SettingsSheet : UserControl
 {
     private readonly ShellViewModel _viewModel;
+    private readonly SpeedProfileService _speedProfiles;
     private bool _loading = true;
 
     public SettingsSheet(ShellViewModel viewModel)
@@ -16,6 +17,7 @@ public sealed partial class SettingsSheet : UserControl
         InitializeComponent();
 
         var settings = viewModel.Settings;
+        _speedProfiles = new SpeedProfileService(settings);
 
         SavePathRow.Value = settings.DefaultSavePath;
         ScheduleRow.Value = $"{settings.OffPeakStart} – {settings.OffPeakEnd}";
@@ -25,13 +27,18 @@ public sealed partial class SettingsSheet : UserControl
         NightSwitch.IsOn = settings.UncappedAtNight;
         ClipboardSwitch.IsOn = settings.WatchClipboard;
         NotifySwitch.IsOn = settings.NotifyOnCompletion;
+        MotwSwitch.IsOn = settings.MarkOfTheWeb;
         VerifySwitch.IsOn = settings.VerifyChecksums;
         ScanSwitch.IsOn = settings.ScanOnCompletion;
         EdgeSwitch.IsOn = viewModel.EdgeHide;
         IslandSwitch.IsOn = viewModel.ShowIsland;
 
+        NameTemplateBox.Text = settings.NameTemplate;
+
         Select(ConcurrencyBox, settings.MaxSimultaneousDownloads.ToString());
         Select(GlobalLimitBox, settings.GlobalSpeedLimit);
+        ProfileBox.ItemsSource = _speedProfiles.Profiles.Select(p => p.Name).ToList();
+        Select(ProfileBox, settings.ActiveSpeedProfile);
         Select(RetryBox, settings.RetryPolicy);
         Select(AfterBox, settings.WhenAllComplete);
 
@@ -55,6 +62,8 @@ public sealed partial class SettingsSheet : UserControl
     private void OnNightToggled(object? sender, bool value) => Update(s => s.UncappedAtNight = value);
 
     private void OnNotifyToggled(object? sender, bool value) => Update(s => s.NotifyOnCompletion = value);
+
+    private void OnMotwToggled(object? sender, bool value) => Update(s => s.MarkOfTheWeb = value);
 
     private void OnVerifyToggled(object? sender, bool value) => Update(s => s.VerifyChecksums = value);
 
@@ -83,6 +92,14 @@ public sealed partial class SettingsSheet : UserControl
 
     private void OnGlobalLimitChanged(object sender, SelectionChangedEventArgs e) =>
         Update(s => s.GlobalSpeedLimit = GlobalLimitBox.SelectedItem as string ?? "不限");
+
+    /// <summary>限速档位（P2-2）: switch applies the cap to the live kernel and records the name.</summary>
+    private void OnProfileChanged(object sender, SelectionChangedEventArgs e) =>
+        Update(_ => _speedProfiles.Switch(ProfileBox.SelectedItem as string ?? "全速",
+            _viewModel.Manager.SetGlobalSpeedLimit));
+
+    private void OnNameTemplateChanged(object sender, TextChangedEventArgs e) =>
+        Update(s => s.NameTemplate = NameTemplateBox.Text);
 
     private void OnRetryChanged(object sender, SelectionChangedEventArgs e) =>
         Update(s => s.RetryPolicy = RetryBox.SelectedItem as string ?? "3 次");
