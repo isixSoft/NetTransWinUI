@@ -53,6 +53,10 @@ public sealed partial class SettingsSheet : UserControl
         SelectByValue(LanguageBox, settings.Language);
 
         _loading = false;
+
+        // 站点提取与外部引擎（圈22）
+        YtDlpSwitch.IsOn = settings.EnableYtDlp;
+        EngineCmdBox.Text = settings.ExternalEngineCommand ?? "";
     }
 
     private static void Select(ComboBox box, string value)
@@ -136,6 +140,13 @@ public sealed partial class SettingsSheet : UserControl
         if (_loading) return;
         Update(s => s.Language = (LanguageBox.SelectedItem as KeyValuePair<string, string>?)?.Value ?? "auto");
     }
+
+    /// <summary>圈22：yt-dlp 兜底开关。</summary>
+    private void OnYtDlpToggled(object? sender, bool value) => Update(s => s.EnableYtDlp = value);
+
+    /// <summary>圈22：外部引擎命令模板。占位符 {url} {path} {name} {files} 由内核执行器替换。</summary>
+    private void OnEngineCmdChanged(object sender, TextChangedEventArgs e) =>
+        Update(s => s.ExternalEngineCommand = EngineCmdBox.Text);
 
     private void OnOptimizeClick(object sender, RoutedEventArgs e) =>
         _viewModel.Say(L10n.Get("NotifyConcurrencyOpt"));

@@ -44,6 +44,9 @@ internal static class Program
         Run("20. 多语言 resw：en 与 zh-CN 键集合一致（P2-9）", L10nParity);
         Run("21. 多语言 resw：7 个工具栏 tooltip 键 + 设置页文案键齐全且值非空（P2-9）", L10nRequiredKeys);
         Run("22. Language 设置：默认 auto + 往返持久化（P2-9）", LanguageFieldContract);
+        Run("23. 外部引擎命令模板：原样透传进 KernelOptions（圈22）", ExternalEngineCommandMapping);
+        Run("24. yt-dlp 兜底开关：EnableYtDlp → 内核（圈22）", EnableYtDlpMapping);
+        Run("25. 完成后动作：WhenAllComplete 下拉值 → AfterCompletion enum（圈22）", AfterCompletionMapping);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -564,6 +567,11 @@ internal static class Program
         "NotifyClipboardStarted",
         "NotifyClipboardStopped",
         "NotifyConcurrencyOpt",
+        "SettingsGroupEngines.Text",
+        "SettingsRowYtDlp.Label",
+        "SettingsRowEngineCmd.Label",
+        "SettingsEngineCmd.PlaceholderText",
+        "SettingsNoteEngine.Text",
     };
 
     private static string[] AllL10nKeys =>
@@ -635,6 +643,62 @@ internal static class Program
 
         store.Save(new AppSettings { Language = "en" });
         Equal("en", store.Load().Language, "Language 往返 en");
+    }
+
+    // ── 23/24/25. 圈22：ExternalEngineCommand / EnableYtDlp / AfterCompletion ──
+
+    private static void ExternalEngineCommandMapping()
+    {
+        // 命令模板字符串原样透传进内核占位符不变，外壳在 TransferSession.Engines.cs 执行
+        var settings = new AppSettings { ExternalEngineCommand = "aria2c --select-file {files} -x 16 -s 16 -o '{path}' '{url}'" };
+        var options = KernelOptionsFactory.Create(settings);
+        Equal("aria2c --select-file {files} -x 16 -s 16 -o '{path}' '{url}'", options.ExternalEngineCommand,
+            "ExternalEngineCommand 应原样透传");
+
+        // 默认空 → null（内核走 EngineRunner 委托通路）
+        That(KernelOptionsFactory.Create(new AppSettings()).ExternalEngineCommand is null,
+            "默认未设置命令模板 → null");
+
+        // 空白 → null（与其他字符串字段一致）
+        That(KernelOptionsFactory.Create(new AppSettings { ExternalEngineCommand = "   " }).ExternalEngineCommand is null,
+            "空白命令模板 → null");
+    }
+
+    private static void EnableYtDlpMapping()
+    {
+        That(!KernelOptionsFactory.Create(new AppSettings()).EnableYtDlp, "默认 EnableYtDlp=false");
+        That(KernelOptionsFactory.Create(new AppSettings { EnableYtDlp = true }).EnableYtDlp,
+            "EnableYtDlp=true → 内核开关开");
+    }
+
+    private static void AfterCompletionMapping()
+    {
+        // 下拉值 → AfterCompletion enum
+        Equal(AfterCompletion.None,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "无操作" }).AllComplete,
+            "\"无操作\" → None");
+        Equal(AfterCompletion.ExitApp,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "退出程序" }).AllComplete,
+            "\"退出程序\" → ExitApp");
+        Equal(AfterCompletion.Hibernate,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "休眠" }).AllComplete,
+            "\"休眠\" → Hibernate");
+        Equal(AfterCompletion.Shutdown,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "关机" }).AllComplete,
+            "\"关机\" → Shutdown");
+
+        // 非法/空值 → 兜底 None（不触发任何动作）
+        Equal(AfterCompletion.None,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "" }).AllComplete,
+            "空 WhenAllComplete → None");
+        Equal(AfterCompletion.None,
+            KernelOptionsFactory.Create(new AppSettings { WhenAllComplete = "garbage" }).AllComplete,
+            "未知值 → None");
+
+        // 默认 AppSettings.WhenAllComplete = "无操作"
+        Equal(AfterCompletion.None,
+            KernelOptionsFactory.Create(new AppSettings()).AllComplete,
+            "默认设置 → None");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────

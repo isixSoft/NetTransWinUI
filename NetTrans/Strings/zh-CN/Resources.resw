@@ -99,4 +99,11 @@
   <data name="NotifyClipboardStarted" xml:space="preserve"><value>已开始监视剪贴板</value></data>
   <data name="NotifyClipboardStopped" xml:space="preserve"><value>已停止监视剪贴板</value></data>
   <data name="NotifyConcurrencyOpt" xml:space="preserve"><value>并发数优化会改动系统设置，已记录为待执行</value></data>
+
+  <!-- 站点提取与外部引擎（圈22） -->
+  <data name="SettingsGroupEngines.Text" xml:space="preserve"><value>站点提取与外部引擎</value></data>
+  <data name="SettingsRowYtDlp.Label" xml:space="preserve"><value>yt-dlp 兜底站点提取器</value></data>
+  <data name="SettingsRowEngineCmd.Label" xml:space="preserve"><value>BT / eD2k 外部引擎命令模板</value></data>
+  <data name="SettingsEngineCmd.PlaceholderText" xml:space="preserve"><value>留空即禁用外部引擎，示例：aria2c --select-file {files} -x 16 -s 16 -o '{path}' '{url}'</value></data>
+  <data name="SettingsNoteEngine.Text" xml:space="preserve"><value>占位符：{url}（任务 URL）、{path}（解析后的落盘路径）、{name}（任务名）、{files}（--select-file 索引列表，BT per-file 勾选时自动展开）。</value></data>
 </root>

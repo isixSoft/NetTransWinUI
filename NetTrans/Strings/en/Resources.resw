@@ -99,4 +99,11 @@
   <data name="NotifyClipboardStarted" xml:space="preserve"><value>Clipboard monitoring started</value></data>
   <data name="NotifyClipboardStopped" xml:space="preserve"><value>Clipboard monitoring stopped</value></data>
   <data name="NotifyConcurrencyOpt" xml:space="preserve"><value>Concurrency tuning queued (requires system settings change)</value></data>
+
+  <!-- Site extraction & external-engine group (圈22) -->
+  <data name="SettingsGroupEngines.Text" xml:space="preserve"><value>Site extraction &amp; external engine</value></data>
+  <data name="SettingsRowYtDlp.Label" xml:space="preserve"><value>yt-dlp fallback extractor</value></data>
+  <data name="SettingsRowEngineCmd.Label" xml:space="preserve"><value>BT / eD2k external-engine command</value></data>
+  <data name="SettingsEngineCmd.PlaceholderText" xml:space="preserve"><value>empty disables external engine; e.g. aria2c --select-file {files} -x 16 -s 16 -o '&apos;{path}&apos;' '&apos;{url}&apos;'</value></data>
+  <data name="SettingsNoteEngine.Text" xml:space="preserve"><value>Placeholders: {url} (task URL), {path} (resolved save path), {name} (task name), {files} (--select-file index list, expanded when per-file selection is enabled).</value></data>
 </root>

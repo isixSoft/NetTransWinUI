@@ -35,6 +35,13 @@ public static class KernelOptionsFactory
             MarkOfTheWeb = settings.MarkOfTheWeb,
             OffPeakStart = settings.OffPeakStart,
             OffPeakEnd = settings.OffPeakEnd,
+            EnableYtDlp = settings.EnableYtDlp,
+            // 命令模板：空白视为 null，内核此时只认 EngineRunner 委托通路。
+            ExternalEngineCommand = string.IsNullOrWhiteSpace(settings.ExternalEngineCommand)
+                ? null
+                : settings.ExternalEngineCommand.Trim(),
+            // 完成后动作：下拉值字符串 → AfterCompletion enum；非法/空 → None。
+            AllComplete = ParseAfterCompletion(settings.WhenAllComplete),
             // 本地签名库跟着下载根目录走（.nettrans-checksums.json）；
             // 未配置下载目录则不落盘，只保留进程内历史。
             HashDatabasePath = string.IsNullOrWhiteSpace(settings.DefaultSavePath)
@@ -93,4 +100,16 @@ public static class KernelOptionsFactory
 
         return int.TryParse(trimmed[..i], out var value) ? value : fallback;
     }
+
+    /// <summary>完成后动作："无操作/退出程序/休眠/关机" → AfterCompletion enum；
+    /// 非法值 → None（不触发动作）。</summary>
+    private static AfterCompletion ParseAfterCompletion(string? text) =>
+        text?.Trim() switch
+        {
+            "退出程序" => AfterCompletion.ExitApp,
+            "关机" => AfterCompletion.Shutdown,
+            "休眠" => AfterCompletion.Hibernate,
+            "通知" => AfterCompletion.Notify,
+            _ => AfterCompletion.None,
+        };
 }
