@@ -31,13 +31,34 @@ jobs:
       - name: Build (${{ matrix.tfm }})
         run: dotnet build NetTrans/NetTrans.csproj -c Release -f ${{ matrix.tfm }} -r win-x64 --no-restore
 
-      # P2-9 verification: Strings/<lang>/Resources.resw must actually reach the
-      # build output as resources.pri, otherwise language switching has nothing
-      # to switch to. The XAML/C# build alone cannot prove this.
+      # P2-9 verification: Strings/<lang>/Resources.resw must reach the build output
+      # packed into an application PRI, otherwise language switching has nothing to
+      # switch to. The XAML/C# build alone cannot prove this.
       - name: Verify localized resources (P2-9)
         shell: pwsh
         run: |
-          $all = Get-ChildItem -Path NetTrans -Filter *.pri -Recurse -File | Where-Object { $_.FullName -notlike "*\obj\*" }
-          $all | ForEach-Object { Write-Host ("PRI found: {0} ({1} bytes)" -f $_.FullName, $_.Length) }
-          $pri = $all | Where-Object { $_.Name -ieq "resources.pri" } | Select-Object -First 1
-          if (-not $pri) { throw "resources.pri was not produced - resw files are not packaged" }
+          $out = "NetTrans/bin/Release/${{ matrix.tfm }}/win-x64"
+          if (-not (Test-Path $out)) { throw "output folder not found: $out" }
+
+          $all = Get-ChildItem -Path $out -Filter *.pri -File
+          $all | ForEach-Object { Write-Host ("PRI found: {0} ({1} bytes)" -f $_.Name, $_.Length) }
+
+          # Unpackaged WinUI names the app PRI after the executable; packaged builds
+          # use resources.pri. Accept either, never the framework's own PRIs.
+          $pri = $all | Where-Object { $_.Name -ieq "resources.pri" -or $_.BaseName -ieq "NetTrans" } |
+                 Select-Object -First 1
+          if (-not $pri) { throw "no application PRI (resources.pri / NetTrans.pri) in $out - resw not packaged" }
+
+          $makepri = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makepri.exe -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -Last 1
+          if (-not $makepri) { Write-Warning "makepri.exe not found; skipping PRI content check"; exit 0 }
+
+          $dump = Join-Path $env:TEMP "pri-${{ matrix.tfm }}.xml"
+          & $makepri.FullName dump /if $pri.FullName /of $dump /o | Out-Host
+          if (-not (Test-Path $dump)) { throw "makepri dump produced no output" }
+
+          $xml = Get-Content $dump -Raw
+          foreach ($needle in @("ToolbarAdd.TooltipService.ToolTip", "SettingsRowLanguage.Label", "zh-CN", "en")) {
+            if ($xml -notmatch [regex]::Escape($needle)) { throw "PRI dump missing '$needle'" }
+          }
+          Write-Host "PRI contains toolbar/settings keys plus en and zh-CN candidates"
