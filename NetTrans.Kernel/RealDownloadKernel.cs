@@ -167,6 +167,19 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
     public event Action<DownloadTask>? TaskMoved;
     public event Action<KernelSnapshot>? Ticked;
 
+    /// <summary>
+    /// 批量导入（P1-7）：文本每行一条 URL（# 注释行与空行跳过，见 BatchImport），
+    /// 逐条按 Add 语义入队；文件与剪贴板两种来源共用本入口。
+    /// </summary>
+    public IReadOnlyList<DownloadTask> AddBatch(
+        string text, string saveTo, int connections, TaskPriority priority, bool StartNow, string Queue = "")
+    {
+        var tasks = new List<DownloadTask>();
+        foreach (var url in BatchImport.ParseLines(text))
+            tasks.Add(Add(new NewDownloadRequest(url, saveTo, "", connections, priority, StartNow, Queue: Queue)));
+        return tasks;
+    }
+
     public DownloadTask Add(NewDownloadRequest request)
     {
         DownloadTask task;

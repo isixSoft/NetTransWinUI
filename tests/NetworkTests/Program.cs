@@ -100,6 +100,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("28a. HLS 字幕轨：EXT-X-MEDIA 列出 + 外置 .vtt 可下载", () => HlsSubtitlesAsync(server));
         await RunAsync("28b. HLS 无字幕：行为不变（含缺 URI 的 MEDIA 行）", () => HlsNoSubtitlesAsync(server));
         await RunAsync("28c. DASH 文本轨：text AdaptationSet 外置字幕列出", () => DashSubtitlesAsync(server));
+        await RunAsync("29a. 批量导入：txt 3 行 → 3 任务归指定队列并完成", () => BatchImportFileAsync(server));
+        await RunAsync("29b. 批量导入：空行/注释/空白跳过 + 空文本 0 任务", () => BatchImportEdgesAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

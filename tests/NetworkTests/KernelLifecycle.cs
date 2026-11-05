@@ -451,4 +451,58 @@ internal sealed partial class Program
         gate.Set();
     }
 
+    // ── 29. 批量导入（P1-7：txt 每行一条 / # 注释；剪贴板同路径） ─────────
+
+    private static async Task BatchImportFileAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("batch/one.bin", server.RangeFile(data));
+        server.Map("batch/two.bin", server.RangeFile(data));
+        server.Map("batch/three.bin", server.RangeFile(data));
+
+        var urls = new[] { server.Base + "batch/one.bin", server.Base + "batch/two.bin", server.Base + "batch/three.bin" };
+        var file = Path.Combine(TempDir(), "batch.txt");
+        File.WriteAllText(file, string.Join('\n', urls));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        int doneCount = 0;
+        var allDone = NewSignal();
+        kernel.TaskCompleted += _ => { if (Interlocked.Increment(ref doneCount) == 3) allDone.TrySetResult(); };
+
+        var tasks = kernel.AddBatch(File.ReadAllText(file), dir, 1, TaskPriority.Normal, StartNow: true, Queue: "夜间");
+
+        Equal(3, tasks.Count, "3 行文本应产生 3 个任务");
+        That(tasks.All(t => t.Queue == "夜间"), "全部任务应归指定队列");
+        for (int i = 0; i < 3; i++) Equal(urls[i], tasks[i].Url, $"第 {i + 1} 行 URL 应按序入队");
+
+        await WaitSignalAsync(allDone.Task, "3 个批量任务应全部完成", 60_000);
+        That(tasks.All(t => t.Status == DownloadStatus.Completed), "批量任务应真实下载完成");
+    }
+
+    private static async Task BatchImportEdgesAsync(TestServer server)
+    {
+        server.Map("batch/e1.bin", server.RangeFile(Payload(1024)));
+        server.Map("batch/e2.bin", server.RangeFile(Payload(1024)));
+
+        // 空行 / 注释行 / 纯空白行跳过；CRLF 与前导制表符容忍
+        var text = "# 顶部注释\n" +
+                   server.Base + "batch/e1.bin\n" +
+                   "\n   \n# 另一条注释\n" +
+                   server.Base + "batch/e2.bin\r\n" +
+                   "\t" + server.Base + "batch/e1.bin\n";
+        Equal(string.Join("\n",
+                server.Base + "batch/e1.bin",
+                server.Base + "batch/e2.bin",
+                server.Base + "batch/e1.bin"),
+            string.Join("\n", BatchImport.ParseLines(text)), "解析应只留有效行并按序输出");
+
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        var tasks = kernel.AddBatch(text, dir, 1, TaskPriority.Normal, StartNow: false);
+        Equal(3, tasks.Count, "AddBatch 应按解析结果建任务");
+
+        Equal(0, kernel.AddBatch("", dir, 1, TaskPriority.Normal, StartNow: false).Count, "空文本 → 0 任务");
+        Equal(0, kernel.AddBatch("# 只有注释\n\n", dir, 1, TaskPriority.Normal, StartNow: false).Count, "纯注释/空行 → 0 任务");
+    }
+
 }
