@@ -97,6 +97,9 @@ internal sealed partial class Program : TestKit
         await RunAsync("26b. Cookie 注入：任务级/全局/显式头优先/缺失降级", () => CookieInjectAsync(server));
         await RunAsync("27a. 磁盘空间预检：不足不进运行态 + 错误文案含需要/剩余", () => DiskSpaceBlockedAsync(server));
         await RunAsync("27b. 磁盘空间预检：释放空间后自动恢复完成", () => DiskSpaceRecoveryAsync(server));
+        await RunAsync("28a. HLS 字幕轨：EXT-X-MEDIA 列出 + 外置 .vtt 可下载", () => HlsSubtitlesAsync(server));
+        await RunAsync("28b. HLS 无字幕：行为不变（含缺 URI 的 MEDIA 行）", () => HlsNoSubtitlesAsync(server));
+        await RunAsync("28c. DASH 文本轨：text AdaptationSet 外置字幕列出", () => DashSubtitlesAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

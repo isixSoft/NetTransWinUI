@@ -16,6 +16,8 @@ namespace NetTrans.Kernel.Protocol;
 /// <param name="Trackers">BT/PT tracker 展示列表（已过 SensitiveUrls.Mask 脱敏），非 BT 为 null。</param>
 /// <param name="ExtraHeaders">站点直链所需的附加头（Referer/UA 等）；内核并入传输会话，
 /// 压过默认与任务级同名字头——站点最懂自己的 CDN（与 yt-dlp 同策略）。</param>
+/// <param name="Subtitles">外置字幕轨（HLS EXT-X-MEDIA / DASH text AdaptationSet），
+/// 绝对 URL，可作为普通任务下载；无字幕轨为 null。</param>
 public sealed record ResourceProbe(
     string Name,
     long Size,
@@ -26,4 +28,5 @@ public sealed record ResourceProbe(
     TransferPlan Plan,
     DownloadProtocol? SuggestedProtocol = null,
     IReadOnlyList<string>? Trackers = null,
-    IReadOnlyDictionary<string, string>? ExtraHeaders = null);
+    IReadOnlyDictionary<string, string>? ExtraHeaders = null,
+    IReadOnlyList<SubtitleTrack>? Subtitles = null);

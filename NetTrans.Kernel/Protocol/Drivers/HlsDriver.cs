@@ -32,8 +32,14 @@ public sealed class HlsDriver : IProtocolDriver
         // segment URIs are resolved against the playlist they came from
         string playlistUrl = url;
 
+        // EXT-X-MEDIA lives in the master playlist; capture it before the
+        // variant playlist replaces the parse result.
+        var subtitles = new List<SubtitleTrack>();
+
         if (playlist.Variants.Count > 0)
         {
+            subtitles.AddRange(playlist.Subtitles.Select(track => new SubtitleTrack(
+                track.Name, track.Language, DriverHelpers.ResolveUrl(track.Uri, playlistUrl), track.IsDefault)));
             var best = playlist.Variants.MaxBy(v => v.Bandwidth);
             context.Log?.Invoke($"主播放列表：选择最高码率变体（{best.Bandwidth} bps）");
             playlistUrl = DriverHelpers.ResolveUrl(best.Url, playlistUrl);
@@ -65,7 +71,8 @@ public sealed class HlsDriver : IProtocolDriver
         return new ResourceProbe(
             DriverHelpers.BaseName(url) + ".ts", -1, AcceptRanges: false, ETag: null, FinalUrl: url,
             DownloadProtocol.Hls,
-            new TransferPlan.SegmentFiles(segments, null));
+            new TransferPlan.SegmentFiles(segments, null),
+            Subtitles: subtitles.Count > 0 ? subtitles : null);
     }
 }
 
@@ -73,6 +80,7 @@ public sealed class HlsDriver : IProtocolDriver
 internal sealed class M3u8Playlist
 {
     public List<(long Bandwidth, string Url)> Variants { get; } = new();
+    public List<(string Name, string? Language, string Uri, bool IsDefault)> Subtitles { get; } = new();
     public List<string> Segments { get; } = new();
     public string? InitSegment { get; private set; }
     public string? KeyMethod { get; private set; }
@@ -97,6 +105,23 @@ internal sealed class M3u8Playlist
             {
                 pendingVariantBandwidth = Attribute(line, "BANDWIDTH") is { } value &&
                                           long.TryParse(value, out var parsedBandwidth) ? parsedBandwidth : 0;
+                continue;
+            }
+
+            if (line.StartsWith("#EXT-X-MEDIA", StringComparison.OrdinalIgnoreCase))
+            {
+                // only external subtitle tracks matter here; entries without a
+                // URI (per RFC 8216) are unusable and skipped honestly
+                if (Attribute(line, "TYPE") is { } type &&
+                    type.Equals("SUBTITLES", StringComparison.OrdinalIgnoreCase) &&
+                    Attribute(line, "URI") is { } uri && uri.Length > 0)
+                {
+                    playlist.Subtitles.Add((
+                        Attribute(line, "NAME") ?? "字幕",
+                        Attribute(line, "LANGUAGE"),
+                        uri,
+                        Attribute(line, "DEFAULT")?.Equals("YES", StringComparison.OrdinalIgnoreCase) == true));
+                }
                 continue;
             }
 

@@ -178,6 +178,126 @@ internal sealed partial class Program
         Equal($"{server.Base}hls/v/rel-seg.ts", plan.Segments.Single(), "应取最高码率变体 rel-high.m3u8 并解析分段");
     }
 
+    // ── 28. HLS/DASH 字幕轨（P1-5：外置 .vtt/.srt 优先）──────────────────
+
+    private static async Task HlsSubtitlesAsync(TestServer server)
+    {
+        var master = string.Join('\n',
+            "#EXTM3U",
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"中文\",LANGUAGE=\"zh\",DEFAULT=YES,AUTOSELECT=YES,URI=\"subs/zh.vtt\"",
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",LANGUAGE=\"en\",URI=\"subs/en.srt\"",
+            "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"Audio\",LANGUAGE=\"en\",URI=\"audio/en.m3u8\"",
+            "#EXT-X-STREAM-INF:BANDWIDTH=1000000,SUBTITLES=\"subs\"",
+            "v/video.m3u8");
+        const string video = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10,
+            seg0.ts
+            #EXT-X-ENDLIST
+            """;
+        var vtt = "#WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n你好，世界\n";
+        const string srt = "1\n00:00:01,000 --> 00:00:02,000\nHello\n";
+        server.Map("hls/sub/master.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(master), "application/vnd.apple.mpegurl"));
+        server.Map("hls/sub/v/video.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(video), "application/vnd.apple.mpegurl"));
+        server.Map("hls/sub/subs/zh.vtt", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(vtt), "text/vtt"));
+        server.Map("hls/sub/subs/en.srt", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(srt), "application/x-subrip"));
+
+        var probe = await Registry.ProbeAsync(server.Base + "hls/sub/master.m3u8", null, null, default);
+        var plan = AssertPlan<TransferPlan.SegmentFiles>(probe, "HLS 视频计划不应因字幕存在而改变");
+        Equal($"{server.Base}hls/sub/v/seg0.ts", plan.Segments.Single(), "视频分段应正常解析");
+
+        var tracks = probe.Subtitles ?? throw new Exception("probe.Subtitles 应列出 EXT-X-MEDIA 字幕轨");
+        Equal(2, tracks.Count, "TYPE=SUBTITLES 应有两条，TYPE=AUDIO 不算字幕轨");
+        Equal("中文", tracks[0].Name, "字幕轨 NAME 属性");
+        Equal("zh", tracks[0].Language, "字幕轨 LANGUAGE 属性");
+        That(tracks[0].IsDefault, "DEFAULT=YES 应映射为默认轨");
+        Equal($"{server.Base}hls/sub/subs/zh.vtt", tracks[0].Url, "字幕 URI 应相对 master 解析为绝对 URL");
+        Equal("English", tracks[1].Name, "第二条字幕轨 NAME");
+        Equal("en", tracks[1].Language, "第二条字幕轨 LANGUAGE");
+        Equal($"{server.Base}hls/sub/subs/en.srt", tracks[1].Url, "第二条字幕轨 URL");
+        That(!tracks[1].IsDefault, "无 DEFAULT 的字幕轨不是默认轨");
+
+        // 外置 .vtt 可下载：作为普通 HTTP 任务完整取回
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+        var task = kernel.Add(new NewDownloadRequest(tracks[0].Url, dir, "", 1, TaskPriority.Normal, StartNow: true));
+        await WaitSignalAsync(completed.Task, "字幕 .vtt 应可作为普通任务下载完成", 60_000);
+        Equal(DownloadStatus.Completed, task.Status, "字幕任务应为 Completed");
+        Equal(vtt, File.ReadAllText(TargetPath(dir, task)), "字幕文件内容应一致");
+    }
+
+    private static async Task HlsNoSubtitlesAsync(TestServer server)
+    {
+        const string video = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10,
+            plain.ts
+            #EXT-X-ENDLIST
+            """;
+        const string nouriVideo = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10,
+            nouri.ts
+            #EXT-X-ENDLIST
+            """;
+        var master = string.Join('\n', "#EXTM3U", "#EXT-X-STREAM-INF:BANDWIDTH=1000000", "v/plain.m3u8");
+        // SUBTITLES 行缺 URI：不可用，不得产出轨道也不得影响视频
+        var noUri = string.Join('\n', "#EXTM3U", "#EXT-X-MEDIA:TYPE=SUBTITLES,NAME=\"Ghost\",LANGUAGE=\"en\"", "#EXT-X-STREAM-INF:BANDWIDTH=1000000", "v/nouri.m3u8");
+        server.Map("hls/nosub/master.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(master), "application/vnd.apple.mpegurl"));
+        server.Map("hls/nosub/v/plain.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(video), "application/vnd.apple.mpegurl"));
+        server.Map("hls/nouri/master.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(noUri), "application/vnd.apple.mpegurl"));
+        server.Map("hls/nouri/v/nouri.m3u8", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(nouriVideo), "application/vnd.apple.mpegurl"));
+
+        var probe = await Registry.ProbeAsync(server.Base + "hls/nosub/master.m3u8", null, null, default);
+        AssertPlan<TransferPlan.SegmentFiles>(probe, "无字幕 master 应照常产出 SegmentFiles");
+        That(probe.Subtitles is null or { Count: 0 }, "无 EXT-X-MEDIA 时不应有字幕轨");
+        Equal("master.ts", probe.Name, "无字幕 HLS 输出名不变");
+
+        var probe2 = await Registry.ProbeAsync(server.Base + "hls/nouri/master.m3u8", null, null, default);
+        AssertPlan<TransferPlan.SegmentFiles>(probe2, "缺 URI 的 SUBTITLES 行不应影响视频计划");
+        That(probe2.Subtitles is null or { Count: 0 }, "缺 URI 的 SUBTITLES 行不应产出字幕轨");
+        Equal("master.ts", probe2.Name, "输出名不变");
+    }
+
+    private static async Task DashSubtitlesAsync(TestServer server)
+    {
+        const string mpd = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period>
+                <AdaptationSet contentType="text" lang="zh">
+                  <Representation id="subs-zh" bandwidth="256000">
+                    <BaseURL>subs/zh.vtt</BaseURL>
+                  </Representation>
+                </AdaptationSet>
+                <AdaptationSet contentType="video">
+                  <Representation id="v1" bandwidth="800000">
+                    <BaseURL>video/single.m4v</BaseURL>
+                    <SegmentBase indexRange="0-999">
+                      <Initialization range="0-999"/>
+                    </SegmentBase>
+                  </Representation>
+                </AdaptationSet>
+              </Period>
+            </MPD>
+            """;
+        server.Map("dash/subs.mpd", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(mpd), "application/dash+xml"));
+
+        var probe = await Registry.ProbeAsync(server.Base + "dash/subs.mpd", null, null, default);
+        var plan = AssertPlan<TransferPlan.ByteRanges>(probe, "视频计划不应因文本轨存在而改变");
+        Equal($"{server.Base}dash/video/single.m4v", plan.Url, "视频仍应落在 video AdaptationSet 上");
+        var tracks = probe.Subtitles ?? throw new Exception("DASH text AdaptationSet 应列为字幕轨");
+        Equal(1, tracks.Count, "文本轨数量");
+        Equal("subs-zh", tracks[0].Name, "DASH 字幕轨名取 Representation id");
+        Equal("zh", tracks[0].Language, "DASH 字幕轨语言取 AdaptationSet lang");
+        Equal($"{server.Base}dash/subs/zh.vtt", tracks[0].Url, "DASH 字幕 BaseURL 应解析为绝对 URL");
+    }
+
     // ── 8. SOCKS5 ─────────────────────────────────────────────────────────
 
     private static async Task Socks5RoundtripAsync()

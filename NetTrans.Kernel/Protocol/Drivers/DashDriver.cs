@@ -57,7 +57,27 @@ public sealed class DashDriver : IProtocolDriver
         baseUrl = DriverHelpers.ResolveUrl(baseUrl, url);
 
         var plan = BuildPlan(mpd, period, adaptation, representation, baseUrl, representationId, bandwidth, url, context);
-        return plan;
+
+        // P1-5: text adaptation sets with a single external file (BaseURL) are
+        // listed as subtitle tracks; segmented text tracks need fMP4/WebVTT
+        // splitting (deferred) and are skipped honestly.
+        var subtitles = new List<SubtitleTrack>();
+        foreach (var textSet in period.Elements().Where(e => e.Name.LocalName == "AdaptationSet")
+                     .Where(a => MediaType(a).StartsWith("text", StringComparison.Ordinal) || MediaType(a).Contains("ttml", StringComparison.Ordinal)))
+        {
+            var textRep = textSet.Elements().FirstOrDefault(e => e.Name.LocalName == "Representation");
+            if (textRep is null) continue;
+            var subBase = BaseUrlOf(textRep) ?? BaseUrlOf(textSet);
+            if (string.IsNullOrEmpty(subBase)) continue;
+            var language = (string?)textSet.Attribute("lang") ?? (string?)textRep.Attribute("lang");
+            subtitles.Add(new SubtitleTrack(
+                (string?)textRep.Attribute("id") ?? language ?? "字幕",
+                language,
+                DriverHelpers.ResolveUrl(subBase, url),
+                IsDefault: false));
+        }
+
+        return subtitles.Count > 0 ? plan with { Subtitles = subtitles } : plan;
     }
 
     private ResourceProbe BuildPlan(
