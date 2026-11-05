@@ -164,4 +164,50 @@ internal sealed partial class Program
             $"SetLimit(0) 后应立即放行，实际 {sw.Elapsed.TotalMilliseconds:0}ms");
     }
 
+    // ── 27. 磁盘空间预检（P1-3） ──────────────────────────────────────────
+
+    private static async Task DiskSpaceBlockedAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("space/blocked.bin", server.RangeFile(data, etag: "\"space-1\""));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            ConnectionsPerTask = 1,
+            MaxSimultaneous = 1,
+            FreeSpaceProbe = _ => 1024, // 注入：仅剩 1 KiB，而资源 64 KiB
+        });
+
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "space/blocked.bin", dir, "", 1,
+            TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status == DownloadStatus.Error, "空间不足任务应进入 Error（不进运行态下载）", 30_000);
+        That(task.ErrorMessage is not null && task.ErrorMessage.Contains("需要") && task.ErrorMessage.Contains("剩余"),
+            $"错误文案应含「需要/剩余」（实际「{task.ErrorMessage}」）");
+        That(task.Size == data.Length, $"错误前探测出的资源大小应落在任务上（实际 {task.Size}）");
+        That(!File.Exists(TargetPath(dir, task)), "空间不足不应写出目标文件");
+    }
+
+    private static async Task DiskSpaceRecoveryAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("space/recover.bin", server.RangeFile(data, etag: "\"space-2\""));
+        long free = 1024; // 闭包：先不足，后释放
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            ConnectionsPerTask = 1,
+            MaxSimultaneous = 1,
+            FreeSpaceProbe = _ => free,
+        });
+
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "space/recover.bin", dir, "", 1,
+            TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status == DownloadStatus.Error, "空间不足应先进入 Error", 30_000);
+
+        free = data.Length * 4; // 模拟释放空间；900ms tick 应自动重新排队
+        await WaitAsync(() => task.Status == DownloadStatus.Completed, "释放空间后应自动恢复并完成", 30_000);
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(dir, task))), "恢复下载的字节应完整");
+        That(task.ErrorMessage is null, "自动恢复后错误文案应清空");
+    }
+
 }

@@ -69,6 +69,9 @@ public sealed partial class RealDownloadKernel
 
         // 队列定时启停（P0-3）：每个 tick 顺带评估一次；锁在方法内部短暂持有
         EvaluateQueueSchedules();
+
+        // 磁盘空间预检（P1-3）：空间被释放后自动恢复被拦下的任务
+        RecoverSpaceBlocked();
     }
 
     // ── 队列定时启停（P0-3） ──────────────────────────────────────────────
@@ -142,6 +145,38 @@ public sealed partial class RealDownloadKernel
         foreach (var (task, start) in changes)
         {
             Log(task, start ? "队列调度：到达开始时间，批量开始" : "队列调度：到达停止时间，批量暂停");
+            TaskUpdated?.Invoke(task);
+        }
+        Schedule();
+    }
+
+    // ── 磁盘空间自动恢复（P1-3） ─────────────────────────────────────────
+
+    /// <summary>
+    /// 因空间不足进入 Error 的任务（runtime.SpaceBlocked），每个 tick 重新探测
+    /// 一次保存目录；空间够了就清掉错误状态重新排队，走正常调度完成下载。
+    /// </summary>
+    private void RecoverSpaceBlocked()
+    {
+        List<DownloadTask>? recovered = null;
+        lock (_gate)
+        {
+            foreach (var runtime in _runtimes.Values)
+            {
+                var task = runtime.Task;
+                if (!runtime.SpaceBlocked || task.Status != DownloadStatus.Error) continue;
+                if (task.Size <= 0 || FreeBytes(TargetDirectory(task)) < task.Size) continue;
+                runtime.SpaceBlocked = false;
+                task.Status = DownloadStatus.Queued;
+                task.ErrorMessage = null;
+                (recovered ??= new List<DownloadTask>()).Add(task);
+            }
+        }
+
+        if (recovered is null) return;
+        foreach (var task in recovered)
+        {
+            Log(task, "磁盘空间已释放，自动重新排队");
             TaskUpdated?.Invoke(task);
         }
         Schedule();

@@ -47,6 +47,7 @@ public sealed partial class RealDownloadKernel
         var runtime = _runtimes[task.Id];
         runtime.Generation++;
         runtime.Restart = false;
+        runtime.SpaceBlocked = false;
         runtime.LastDone = 0;
         task.Status = DownloadStatus.Downloading;
         task.ErrorMessage = null;
@@ -82,10 +83,26 @@ public sealed partial class RealDownloadKernel
             else
             {
                 ApplyProbe(task, probe);
-                session = CreateSession(task, runtime, probe, headers);
-                runtime.Session = session;
-                Log(task, DescribePlan(probe));
-                outcome = await session.RunAsync(cts.Token);
+                if (CheckSpace(task) is { } spaceError)
+                {
+                    // 磁盘空间预检（P1-3）：不足不进运行态，tick 每次自动探测恢复。
+                    // outcome 走 Paused：不算传输失败、不计重试，只等空间释放。
+                    runtime.SpaceBlocked = true;
+                    lock (_gate)
+                    {
+                        task.Status = DownloadStatus.Error;
+                        task.ErrorMessage = spaceError;
+                    }
+                    Log(task, spaceError, isError: true);
+                    outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
+                }
+                else
+                {
+                    session = CreateSession(task, runtime, probe, headers);
+                    runtime.Session = session;
+                    Log(task, DescribePlan(probe));
+                    outcome = await session.RunAsync(cts.Token);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -401,6 +418,44 @@ public sealed partial class RealDownloadKernel
         }
 
         return merged;
+    }
+
+    // ── 磁盘空间预检（P1-3） ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 资源大小已知且剩余空间不足时返回错误文案（含「需要/剩余」）；
+    /// 大小未知（流式）无法估算，跳过预检。
+    /// </summary>
+    private string? CheckSpace(DownloadTask task)
+    {
+        if (task.Size <= 0) return null;
+        long free = FreeBytes(TargetDirectory(task));
+        return free < task.Size
+            ? $"磁盘空间不足：需要 {task.Size} 字节，剩余 {free} 字节，等待空间释放后自动重试"
+            : null;
+    }
+
+    /// <summary>保存目录（探测命名后）；空间预检与自动恢复共用。</summary>
+    private string TargetDirectory(DownloadTask task) =>
+        Path.GetDirectoryName(TargetPath(task)) ?? ".";
+
+    /// <summary>剩余空间探测：注入槽优先；探测失败视为充裕，不拦下载。</summary>
+    private long FreeBytes(string directory)
+    {
+        try
+        {
+            return _options.FreeSpaceProbe?.Invoke(directory) ?? RealFreeBytes(directory);
+        }
+        catch
+        {
+            return long.MaxValue;
+        }
+    }
+
+    private static long RealFreeBytes(string directory)
+    {
+        var root = Path.GetPathRoot(Path.GetFullPath(directory));
+        return root is null ? long.MaxValue : new DriveInfo(root).AvailableFreeSpace;
     }
 
     /// <summary>站点直链必需头压过任务级同名字头：站点提取器最懂自己的 CDN

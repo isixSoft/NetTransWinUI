@@ -99,6 +99,12 @@ public sealed class KernelOptions
     public long SmallFileThresholdBytes { get; set; } = 4 * 1024 * 1024;
 
     /// <summary>
+    /// 磁盘空间预检（P1-3）探测槽：给定保存目录，返回剩余可用字节；
+    /// null = 用 DriveInfo 查真实磁盘。测试注入假探针驱动不足/恢复路径。
+    /// </summary>
+    public Func<string, long>? FreeSpaceProbe { get; set; }
+
+    /// <summary>
     /// External-engine slot for the BT / eD2k data plane: when a probe resolves
     /// to an <see cref="TransferPlan.ExternalEngine"/> plan, this runner is
     /// invoked with the plan, the resolved save path and a cancellation token.

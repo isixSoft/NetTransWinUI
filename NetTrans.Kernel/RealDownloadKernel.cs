@@ -54,6 +54,9 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         public bool Removed;
         public bool Restart;
 
+        /// <summary>磁盘空间预检（P1-3）：因空间不足被拦下的任务，tick 自动探测恢复。</summary>
+        public bool SpaceBlocked;
+
         /// <summary>
         /// Save path fixed at the first start, after the probe names the file:
         /// every later start/resume of the same task writes to this exact path,

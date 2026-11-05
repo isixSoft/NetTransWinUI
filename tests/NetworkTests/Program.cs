@@ -95,6 +95,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("25b. nettrans:// 入队：token 校验/参数完整/拒绝", () => ControlApiNettransAsync(server));
         await RunAsync("26a. Cookie 导入：Netscape 解析（#HttpOnly_/过期/域匹配）", CookieParseUnitAsync);
         await RunAsync("26b. Cookie 注入：任务级/全局/显式头优先/缺失降级", () => CookieInjectAsync(server));
+        await RunAsync("27a. 磁盘空间预检：不足不进运行态 + 错误文案含需要/剩余", () => DiskSpaceBlockedAsync(server));
+        await RunAsync("27b. 磁盘空间预检：释放空间后自动恢复完成", () => DiskSpaceRecoveryAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
