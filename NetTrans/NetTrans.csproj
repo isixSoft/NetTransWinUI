@@ -42,14 +42,12 @@
     <PackageReference Include="CommunityToolkit.WinUI.Media" Version="8.2.251219" />
   </ItemGroup>
 
-  <!-- P2-9 MRT Core resource files. WindowsAppSDK only registers "PRIResource" as
-       an available item name; it does not glob *.resw by itself, so the explicit
-       include below is what puts Strings/<lang>/Resources.resw into resources.pri.
-       Language qualifiers come from the folder names, which is why App.xaml.cs can
-       switch languages via ApplicationLanguages.PrimaryLanguageOverride. -->
-  <ItemGroup>
-    <PRIResource Include="Strings\**\*.resw" />
-  </ItemGroup>
+  <!-- P2-9 MRT Core resource files. Do NOT add an explicit PRIResource glob here:
+       with EnableMsixTooling the .NET SDK's default items already pick up
+       **/*.resw (EnableDefaultPriItems defaults to true), and declaring them again
+       is a duplicate-item error. Language qualifiers come from the folder names
+       (en, zh-CN), which is why App.xaml.cs can switch via
+       ApplicationLanguages.PrimaryLanguageOverride. -->
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
