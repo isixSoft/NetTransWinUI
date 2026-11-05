@@ -65,61 +65,19 @@ public sealed partial class RealDownloadKernel
     // ── the per-task worker ───────────────────────────────────────────────
     private async Task RunWorkerAsync(DownloadTask task, Runtime runtime, CancellationTokenSource cts, int generation)
     {
-        TransferOutcome outcome;
-        TransferSession? session = null;
-        try
+        var (outcome, session) = await ProbeAndTransferAsync(task, runtime, cts);
+
+        // 过期链接刷新（P2-8）：失败、错误像 403/410、有来源页且没刷过 →
+        // 从来源页重提直链换上，同一 worker 原地重跑一次（只刷一次防循环）。
+        if (outcome.Kind == TransferOutcomeKind.Failed &&
+            runtime.SourcePage is { Length: > 0 } sourcePage && !runtime.Refreshed &&
+            IsExpiredLink(outcome.Error))
         {
-            if (runtime.ZipEntryName is { } zipEntry)
+            Log(task, $"链接疑似过期（{Brief(outcome.Error ?? "")}），从来源页刷新直链…");
+            if (await TryRefreshUrlAsync(task, runtime, sourcePage, cts.Token))
             {
-                // ZIP 部分下载（P2-5）：任务创建时已知目标成员，跳过探测直接传输
-                outcome = await TransferZipMemberAsync(task, runtime, zipEntry, cts.Token);
+                (outcome, session) = await ProbeAndTransferAsync(task, runtime, cts);
             }
-            else
-            {
-                Log(task, "正在探测资源…");
-                var headers = HeadersFor(runtime, task.Url);
-                var probe = await _drivers.ProbeAsync(
-                    task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
-                if (runtime.Removed)
-                {
-                    // removed mid-probe: fall through to the settle block so the
-                    // slot is released and the queue wakes up — an early return
-                    // here used to leak a MaxSimultaneous slot forever
-                    outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
-                }
-                else
-                {
-                    ApplyProbe(task, probe);
-                    if (CheckSpace(task) is { } spaceError)
-                    {
-                        // 磁盘空间预检（P1-3）：不足不进运行态，tick 每次自动探测恢复。
-                        // outcome 走 Paused：不算传输失败、不计重试，只等空间释放。
-                        runtime.SpaceBlocked = true;
-                        lock (_gate)
-                        {
-                            task.Status = DownloadStatus.Error;
-                            task.ErrorMessage = spaceError;
-                        }
-                        Log(task, spaceError, isError: true);
-                        outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
-                    }
-                    else
-                    {
-                        session = CreateSession(task, runtime, probe, headers);
-                        runtime.Session = session;
-                        Log(task, DescribePlan(probe));
-                        outcome = await session.RunAsync(cts.Token);
-                    }
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            outcome = new TransferOutcome(TransferOutcomeKind.Paused, null);
-        }
-        catch (Exception error)
-        {
-            outcome = new TransferOutcome(TransferOutcomeKind.Failed, error.Message);
         }
 
         bool raiseCompleted = false;
@@ -202,6 +160,89 @@ public sealed partial class RealDownloadKernel
         TaskUpdated?.Invoke(task);
         Schedule();
     }
+
+    /// <summary>探测 + 传输的完整一轮：ZIP 成员直传、否则站点提取/驱动探测 → session。</summary>
+    private async Task<(TransferOutcome Outcome, TransferSession? Session)> ProbeAndTransferAsync(
+        DownloadTask task, Runtime runtime, CancellationTokenSource cts)
+    {
+        try
+        {
+            if (runtime.ZipEntryName is { } zipEntry)
+            {
+                // ZIP 部分下载（P2-5）：任务创建时已知目标成员，跳过探测直接传输
+                return (await TransferZipMemberAsync(task, runtime, zipEntry, cts.Token), null);
+            }
+
+            Log(task, "正在探测资源…");
+            var headers = HeadersFor(runtime, task.Url);
+            var probe = await _drivers.ProbeAsync(
+                task.Url, headers, (message, error) => Log(task, message, error), cts.Token);
+            if (runtime.Removed)
+            {
+                // removed mid-probe: fall through to the settle block so the
+                // slot is released and the queue wakes up — an early return
+                // here used to leak a MaxSimultaneous slot forever
+                return (new TransferOutcome(TransferOutcomeKind.Paused, null), null);
+            }
+
+            ApplyProbe(task, probe);
+            if (CheckSpace(task) is { } spaceError)
+            {
+                // 磁盘空间预检（P1-3）：不足不进运行态，tick 每次自动探测恢复。
+                // outcome 走 Paused：不算传输失败、不计重试，只等空间释放。
+                runtime.SpaceBlocked = true;
+                lock (_gate)
+                {
+                    task.Status = DownloadStatus.Error;
+                    task.ErrorMessage = spaceError;
+                }
+                Log(task, spaceError, isError: true);
+                return (new TransferOutcome(TransferOutcomeKind.Paused, null), null);
+            }
+
+            var session = CreateSession(task, runtime, probe, headers);
+            runtime.Session = session;
+            Log(task, DescribePlan(probe));
+            return (await session.RunAsync(cts.Token), session);
+        }
+        catch (OperationCanceledException)
+        {
+            return (new TransferOutcome(TransferOutcomeKind.Paused, null), null);
+        }
+        catch (Exception error)
+        {
+            return (new TransferOutcome(TransferOutcomeKind.Failed, error.Message), null);
+        }
+    }
+
+    /// <summary>从来源页重新提取直链并替换任务 URL；拿到不同新链返回 true。</summary>
+    private async Task<bool> TryRefreshUrlAsync(
+        DownloadTask task, Runtime runtime, string sourcePage, CancellationToken cancellation)
+    {
+        try
+        {
+            var media = await _drivers.ExtractMediaAsync(sourcePage, null, (m, e) => Log(task, m, e), cancellation);
+            var newUrl = media?.Streams.FirstOrDefault()?.Url;
+            if (string.IsNullOrEmpty(newUrl) || newUrl == task.Url) return false;
+
+            lock (_gate)
+            {
+                task.Url = newUrl;
+                task.ErrorMessage = null;
+            }
+            runtime.Refreshed = true;
+            Log(task, $"直链已刷新（{HostFrom(newUrl)}），用新链接重试");
+            return true;
+        }
+        catch (Exception error)
+        {
+            Log(task, $"刷新直链失败（{Brief(error.Message)}）", isError: true);
+            return false;
+        }
+    }
+
+    private static bool IsExpiredLink(string? error) =>
+        error is not null && (error.Contains("403") || error.Contains("410"));
 
     // ── 完成后动作（P0-4）：任务级优先，全局级「全部完成」收尾；runner 异常只记日志 ──
 

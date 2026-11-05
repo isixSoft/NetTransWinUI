@@ -114,6 +114,7 @@ internal sealed partial class Program : TestKit
         await RunAsync("35a. ZIP 部分下载：central directory 解析（store+deflate 10 成员）", () => ZipIndexParsesCentralDirectoryAsync(server));
         await RunAsync("35b. ZIP 部分下载：按成员 Range 下载解压，字节数远小于整包", () => ZipMemberDownloadAsync(server));
         await RunAsync("36a. 站点批量抓取：列表页一次解析多条草稿并批量入队", () => PageBatchDraftsAsync(server));
+        await RunAsync("37a. 过期链接：403 后从来源页刷新直链并重试", () => ExpiredLinkRefreshAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

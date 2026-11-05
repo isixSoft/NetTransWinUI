@@ -85,6 +85,44 @@ public sealed class ProtocolDriverRegistry
 
     // ── 站点层：页面 URL → 直链流 → 复用协议驱动探测 ─────────────────────
 
+    /// <summary>站点提取（P2-8 过期链接刷新用）：第一个认领成功的提取器返回的
+    /// 媒体；全部放弃 → null。不做流可用性探测——刷新后的直链由内核完整重探。</summary>
+    public async Task<SiteMedia?> ExtractMediaAsync(
+        string url,
+        IReadOnlyDictionary<string, string>? headers,
+        LogSink? log,
+        CancellationToken cancellation)
+    {
+        var context = new DriverContext
+        {
+            Options = _options,
+            Http = _http,
+            Headers = headers ?? _options.DefaultHeaders,
+            Log = log,
+        };
+
+        foreach (var site in _sites.FindAll(url))
+        {
+            SiteMedia? media;
+            try
+            {
+                media = await site.ExtractAsync(url, context, cancellation);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                log?.Invoke($"站点解析（{site.Name}）失败，尝试下一个认领者（{DriverHelpers.Brief(error.Message)}）");
+                continue;
+            }
+            if (media is not null) return media;
+        }
+
+        return null;
+    }
+
     /// <summary>站点批量抓取（P2-6）：第一个支持批量的认领者解析出的任务草稿；
     /// 都不支持/放弃 → 空列表。</summary>
     public async Task<IReadOnlyList<SiteMedia>> ExtractDraftsAsync(

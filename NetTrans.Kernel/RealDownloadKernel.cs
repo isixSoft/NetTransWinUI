@@ -60,6 +60,10 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         /// <summary>ZIP 部分下载（P2-5）：非空时该任务走成员传输路径，跳过探测/TransferSession。</summary>
         public string? ZipEntryName;
 
+        /// <summary>过期链接刷新（P2-8）：任务来源页面；403/410 时从该页重提直链，仅一次。</summary>
+        public string? SourcePage;
+        public bool Refreshed;
+
         /// <summary>
         /// Save path fixed at the first start, after the probe names the file:
         /// every later start/resume of the same task writes to this exact path,
@@ -198,6 +202,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
                 CookieFile = request.CookieFile,
                 OnComplete = request.OnComplete,
                 OnCompleteCommand = request.OnCompleteCommand,
+                SourcePage = request.SourcePage,
             };
             _runtimes[task.Id] = runtime;
             ApplyLimitLocked(runtime);

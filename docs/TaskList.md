@@ -38,6 +38,7 @@ P2-1 Metalink4 · P2-2 限速档位 · P2-3 文件名模板 · P2-4 Mark-of-the-
 | 18 | P2-5 ZIP 部分下载（ZipIndex 解析 central directory + AddZipMember 成员传输，Range 只拉 EOCD/CD/成员段） | NetworkTests/ZipPartial.cs 35a/35b | CD 解析（store+deflate 10 成员）；按成员解压正确且字节远小于整包；未知成员入 Error（已完 5274f9f） |
 | 19 | P2-6 站点批量抓取（ISiteExtractor.ExtractDraftsAsync 默认接口方法；GenericPageSite 兜底每候选一草稿；内核 AddPageBatchAsync） | NetworkTests/SiteExtractors.cs 36a | 列表页 3 直链→3 草稿批量入队全完成，锚点/data:/mailto 跳过（已完 5a44249） |
 | 20 | P2-7 哈希展示比对（HashCompareService.Compute 三算法流式 + Verify 长度识别/清洗/两值展示；UI 接线不在本圈） | SetupTests 18 契约 | NIST "abc" 三算法向量；粘贴大小写/空白清洗匹配；不匹配两值都展示；无法识别 null（已完 7828d49） |
+| 21 | P2-8 过期链接刷新（NewDownloadRequest.SourcePage；403/410 → 从来源页 ExtractMediaAsync 重提直链换 URL 原地重试一次） | NetworkTests/SiteExtractors.cs 37a | 403 后自动刷新直链并完成、任务 URL 已换新链、日志记录刷新（已完） |
 
 ## 明确不做
 

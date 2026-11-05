@@ -506,4 +506,40 @@ internal sealed partial class Program
         Equal(Hash(zip), Hash(File.ReadAllBytes(Path.Combine(dir, "clip.zip"))), "zip 落盘字节应完整");
         Equal(3, kernel.Tasks.Count, "内核应恰好只有批量入队的 3 个任务");
     }
+
+    // ── 37. 过期链接刷新（P2-8：403/410 → 从来源页重提直链并重试） ─────────
+
+    private static async Task ExpiredLinkRefreshAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("refresh/file-v2.zip", server.RangeFile(data));
+        int pageHits = 0;
+        server.Map("refresh/page", ctx =>
+        {
+            int hit = Interlocked.Increment(ref pageHits);
+            var html = hit <= 1
+                ? """<html><head><title>刷新页</title></head><body><a href="file-v1.zip">文件</a></body></html>"""
+                : """<html><head><title>刷新页</title></head><body><a href="file-v2.zip">文件</a></body></html>""";
+            TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(html), "text/html");
+        });
+        server.Map("refresh/file-v1.zip", ctx =>
+        {
+            ctx.Response.StatusCode = 403; // 旧直链已过期
+            ctx.Response.ContentLength64 = 0;
+            ctx.Response.Close();
+        });
+
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+
+        var tasks = await kernel.AddPageBatchAsync(server.Base + "refresh/page", dir, TaskPriority.Normal, StartNow: true);
+        Equal(1, tasks.Count, "来源页应有 1 条草稿");
+        await WaitSignalAsync(completed.Task, "403 后应自动刷新直链并完成", 60_000);
+        Equal(DownloadStatus.Completed, tasks[0].Status, "任务最终应 Completed");
+        That(tasks[0].Url.EndsWith("file-v2.zip"), "任务 URL 应已换成刷新后的直链");
+        Equal(Hash(data), Hash(File.ReadAllBytes(Path.Combine(dir, "file-v2.zip"))), "刷新后新直链内容应完整");
+        That(tasks[0].Log.Any(l => l.Message.Contains("刷新")), "日志应记录直链刷新");
+    }
 }

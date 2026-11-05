@@ -20,7 +20,7 @@ public sealed partial class RealDownloadKernel
         {
             var stream = draft.Streams[0]; // 草稿的最优（第 0 条）流即下载目标
             tasks.Add(Add(new NewDownloadRequest(stream.Url, saveTo, "", 2, priority, StartNow,
-                Headers: stream.Headers)));
+                Headers: stream.Headers, SourcePage: url)));
         }
         return tasks;
     }

@@ -17,6 +17,8 @@ namespace NetTrans.Kernel;
 /// （aria2 --select-file 语义，按勾选顺序透传）；null/空 = 不选择（{files} 展开为空）。</param>
 /// <param name="NameOverride">任务初始文件名（P2-5 ZIP 成员）：空 = URL 文件名；
 /// Kind/Category 由该名推导，使任务一开始就展示目标成员。</param>
+/// <param name="SourcePage">来源页面 URL（P2-8 过期链接刷新）：批量抓取/页面提取
+/// 创建的任务自动带上；直链 403/410 时内核从该页重新提取新直链并重试一次。</param>
 public sealed record NewDownloadRequest(
     string Url,
     string SaveTo,
@@ -34,4 +36,5 @@ public sealed record NewDownloadRequest(
     string Queue = "",
     string? CookieFile = null,
     IReadOnlyList<int>? SelectedFiles = null,
-    string? NameOverride = null);
+    string? NameOverride = null,
+    string? SourcePage = null);
