@@ -56,6 +56,7 @@ internal sealed class FakeKernel : IDownloadKernel
     public void Redownload(int id) => Calls.Add($"Redownload:{id}");
     public void SetPriority(int id, TaskPriority priority) => Calls.Add($"SetPriority:{id}:{priority}");
     public void SetSpeedLimit(int id, string limit) => Calls.Add($"SetSpeedLimit:{id}:{limit}");
+    public void SetGlobalSpeedLimit(long? bytesPerSecond) => Calls.Add($"SetGlobalSpeedLimit:{bytesPerSecond?.ToString() ?? "null"}");
     public void Dispose() { }
 
     public void RaiseTaskAdded(DownloadTask task) => TaskAdded?.Invoke(task);

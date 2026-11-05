@@ -22,7 +22,9 @@
     <Compile Include="../../NetTrans/Services/KernelOptionsFactory.cs" Link="Linked/KernelOptionsFactory.cs" />
     <Compile Include="../../NetTrans/Services/ISettingsStore.cs" Link="Linked/ISettingsStore.cs" />
     <Compile Include="../../NetTrans/Services/JsonSettingsStore.cs" Link="Linked/JsonSettingsStore.cs" />
+    <Compile Include="../../NetTrans/Services/SpeedProfileService.cs" Link="Linked/SpeedProfileService.cs" />
     <Compile Include="../../NetTrans/Models/AppSettings.cs" Link="Linked/AppSettings.cs" />
+    <Compile Include="../../NetTrans/Models/SpeedProfile.cs" Link="Linked/SpeedProfile.cs" />
   </ItemGroup>
 
 </Project>

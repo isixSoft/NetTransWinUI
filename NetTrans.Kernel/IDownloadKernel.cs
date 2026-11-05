@@ -49,5 +49,12 @@ public interface IDownloadKernel : IDisposable
     /// <summary>Per-task cap as shown in the dropdown ("不限", "1 MB/s", ...).</summary>
     void SetSpeedLimit(int id, string limit);
 
+    /// <summary>
+    /// Global cap in bytes/s for every task (限速档位切换用); null = unlimited.
+    /// Re-applies immediately, so a mid-download profile switch is live within
+    /// one limiter slice (≤250ms).
+    /// </summary>
+    void SetGlobalSpeedLimit(long? bytesPerSecond);
+
     DownloadTask Add(NewDownloadRequest request);
 }

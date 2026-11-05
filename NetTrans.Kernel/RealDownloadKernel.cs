@@ -431,6 +431,18 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         TaskUpdated?.Invoke(task);
     }
 
+    public void SetGlobalSpeedLimit(long? bytesPerSecond)
+    {
+        lock (_gate)
+        {
+            _options.GlobalSpeedLimit = bytesPerSecond is > 0 ? bytesPerSecond : null;
+            // Re-apply right away (same as the night-window flip in Tick) so a
+            // mid-download profile switch is live within one limiter slice
+            // (≤250ms) instead of waiting for a state change to trigger a tick.
+            foreach (var runtime in _runtimes.Values) ApplyLimitLocked(runtime);
+        }
+    }
+
     public void Dispose()
     {
         _timer.Dispose();

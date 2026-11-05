@@ -16,6 +16,12 @@ public sealed class AppSettings
     public string GlobalSpeedLimit { get; set; } = "不限";
     public bool UncappedAtNight { get; set; }
 
+    /// <summary>命名限速档位（P2-2）；空列表 = 使用 SpeedProfileService.Defaults 出厂档位。</summary>
+    public List<SpeedProfile> SpeedProfiles { get; set; } = new();
+
+    /// <summary>当前生效的档位名（「全速」= 不限）。</summary>
+    public string ActiveSpeedProfile { get; set; } = "全速";
+
     // 队列与计划
     public string OffPeakStart { get; set; } = "23:00";
     public string OffPeakEnd { get; set; } = "07:00";

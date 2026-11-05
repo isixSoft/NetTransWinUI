@@ -210,4 +210,36 @@ internal sealed partial class Program
         That(task.ErrorMessage is null, "自动恢复后错误文案应清空");
     }
 
+    // ── 32. 限速档位：全局限速中途切换立即生效（P2-2） ────────────────────
+
+    private static async Task GlobalSwitchMidwayAsync(TestServer server)
+    {
+        var data = Payload(4 * 1024 * 1024);
+        server.Map("limit/profile.bin", server.RangeFile(data));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            GlobalSpeedLimit = 512 * 1024, // 档位「浏览优先」= 512 KB/s
+            ConnectionsPerTask = 1,
+            MaxSimultaneous = 1,
+        });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "limit/profile.bin", dir, "", 1,
+            TaskPriority.Normal, StartNow: true));
+        var sw = Stopwatch.StartNew();
+        await WaitAsync(() => task.Done > 0, "限速阶段应出现进度", 10_000);
+        That(sw.Elapsed.TotalSeconds >= 0.4, $"限速阶段应已持续 ≥0.4s，实际 {sw.Elapsed.TotalSeconds:0.00}s");
+
+        kernel.SetGlobalSpeedLimit(null); // 一键切「全速」→ 下一 tick 生效
+        await WaitSignalAsync(completed.Task, "切全速后任务应完成", 30_000);
+        sw.Stop();
+
+        Equal(DownloadStatus.Completed, task.Status, "任务状态应为 Completed");
+        Equal(Hash(data), Hash(File.ReadAllBytes(TargetPath(dir, task))), "切换档位后字节应完整");
+        That(sw.Elapsed.TotalSeconds < 6.5,
+            $"4 MiB 全程 512 KB/s 需 ≥8s，中途切全速后总耗时应 <6.5s，实际 {sw.Elapsed.TotalSeconds:0.00}s");
+    }
+
 }

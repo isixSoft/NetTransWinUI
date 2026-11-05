@@ -268,6 +268,12 @@ public sealed class SimulatedDownloadKernel : IDownloadKernel
         TaskUpdated?.Invoke(changed);
     }
 
+    public void SetGlobalSpeedLimit(long? bytesPerSecond)
+    {
+        // The simulated kernel's growth curve ignores global capping; the
+        // method exists so the shell and the real kernel stay interchangeable.
+    }
+
     public DownloadTask Add(NewDownloadRequest request)
     {
         DownloadTask task;

@@ -34,6 +34,7 @@ internal static class Program
         Run("12. 本地签名库路径映射", HashDatabaseMapping);
         Run("13. 系统通知：开关开→sink 收到标题/正文；关→不发；null/异常不崩", NotificationContract);
         Run("14. 系统通知开关映射：NotifyOnCompletion → NotifyOnComplete", NotifyOnCompleteMapping);
+        Run("15. 限速档位：默认档位/Resolve/Switch 即时下发/未知档位不动内核/往返持久化", SpeedProfilesContract);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -313,6 +314,62 @@ internal static class Program
             "NotifyOnCompletion=false → 内核通知关");
         That(KernelOptionsFactory.Create(new AppSettings { NotifyOnCompletion = true }).NotifyOnComplete,
             "NotifyOnCompletion=true → 内核通知开");
+    }
+
+    // ── 15. 限速档位 profile（P2-2） ──────────────────────────────────────
+
+    private static void SpeedProfilesContract()
+    {
+        // 出厂默认档位：全速（不限）+ 浏览优先（1 MiB/s），对标 Motrix 多 profile
+        var defaults = SpeedProfileService.Defaults;
+        Equal(2, defaults.Count, "默认档位应有 2 个");
+        Equal("全速", defaults[0].Name, "默认档位 1 名称");
+        Equal((long?)null, defaults[0].BytesPerSecond, "「全速」→ null（不限）");
+        Equal("浏览优先", defaults[1].Name, "默认档位 2 名称");
+        Equal(1048576L, defaults[1].BytesPerSecond, "「浏览优先」→ 1 MiB/s");
+
+        // Resolve：档位名 → 内核字节数
+        var settings = new AppSettings();
+        var service = new SpeedProfileService(settings);
+        Equal((long?)null, service.Resolve("全速"), "Resolve(全速) → null");
+        Equal(1048576L, service.Resolve("浏览优先"), "Resolve(浏览优先) → 1048576");
+        Equal((long?)null, service.Resolve("不存在的档位"), "Resolve(未知档位) → null 兜底");
+
+        // Switch：经委托即时下发内核，并记录当前档位
+        long? applied = 42L;
+        That(service.Switch("浏览优先", v => applied = v), "Switch(浏览优先) 应成功");
+        Equal(1048576L, applied, "Switch 应把 1048576 下发给内核委托");
+        Equal("浏览优先", settings.ActiveSpeedProfile, "切换后 ActiveSpeedProfile 记录档位名");
+
+        That(service.Switch("全速", v => applied = v), "Switch(全速) 应成功");
+        Equal((long?)null, applied, "Switch(全速) 应下发 null（解除限速）");
+        Equal("全速", settings.ActiveSpeedProfile, "切回全速后 ActiveSpeedProfile 更新");
+
+        // 未知档位：返回 false，不触碰内核、不改状态
+        applied = 42L;
+        That(!service.Switch("不存在", v => applied = v), "未知档位 Switch 应失败");
+        Equal(42L, applied, "未知档位不得触碰内核委托");
+        Equal("全速", settings.ActiveSpeedProfile, "失败切换不改 ActiveSpeedProfile");
+
+        // 自定义档位优先：settings.SpeedProfiles 非空时覆盖默认列表
+        settings.SpeedProfiles.Add(new SpeedProfile("自定义档", 2097152L));
+        Equal(1, service.Profiles.Count, "自定义列表非空 → Profiles 用自定义列表");
+        Equal("自定义档", service.Profiles[0].Name, "自定义档位名");
+        Equal(2097152L, service.Resolve("自定义档"), "Resolve(自定义档) → 2097152");
+
+        // 往返：档位列表 + 当前档位随设置持久化
+        ISettingsStore store = new JsonSettingsStore();
+        var saved = new AppSettings
+        {
+            SpeedProfiles = { new SpeedProfile("夜间小水管", 262144L) },
+            ActiveSpeedProfile = "夜间小水管",
+        };
+        store.Save(saved);
+        var loaded = store.Load();
+        Equal(1, loaded.SpeedProfiles.Count, "档位列表应随设置持久化");
+        Equal("夜间小水管", loaded.SpeedProfiles[0].Name, "往返后档位名");
+        Equal(262144L, loaded.SpeedProfiles[0].BytesPerSecond, "往返后档位限速值");
+        Equal("夜间小水管", loaded.ActiveSpeedProfile, "往返后当前档位");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────
