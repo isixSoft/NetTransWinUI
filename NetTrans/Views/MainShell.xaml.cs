@@ -148,7 +148,7 @@ public sealed partial class MainShell : UserControl
         row.RowInvoked += (_, e) => ViewModel?.Select(e.Item.Id, e.Additive);
         row.ToggleRequested += (_, item) => ViewModel?.ToggleTaskCommand.Execute(item);
         row.RemoveRequested += (_, item) => ViewModel?.RemoveTaskCommand.Execute(item);
-        row.ContextRequested += (_, request) => ShowContextMenu(request);
+        row.RowContextRequested += (_, request) => ShowContextMenu(request);
     }
 
     private void RefreshRowDensity()

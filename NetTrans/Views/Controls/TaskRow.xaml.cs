@@ -29,7 +29,10 @@ public sealed partial class TaskRow : UserControl
     public event EventHandler<(DownloadItemViewModel Item, bool Additive)>? RowInvoked;
     public event EventHandler<DownloadItemViewModel>? ToggleRequested;
     public event EventHandler<DownloadItemViewModel>? RemoveRequested;
-    public event EventHandler<RowContextRequest>? ContextRequested;
+    /// <summary>Named RowContextRequested, not ContextRequested: the latter
+    /// hides UIElement.ContextRequested (CS0108) and would shadow the built-in
+    /// routed event.</summary>
+    public event EventHandler<RowContextRequest>? RowContextRequested;
 
     private DownloadItemViewModel? _item;
     private bool _isPointerOver;
@@ -204,7 +207,7 @@ public sealed partial class TaskRow : UserControl
     {
         if (Item is null) return;
         RowInvoked?.Invoke(this, (Item, false));
-        ContextRequested?.Invoke(this, new RowContextRequest(Item, e.GetPosition(null)));
+        RowContextRequested?.Invoke(this, new RowContextRequest(Item, e.GetPosition(null)));
         e.Handled = true;
     }
 

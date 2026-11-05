@@ -1,3 +1,4 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using NetTrans.Kernel;
 using NetTrans.Services;

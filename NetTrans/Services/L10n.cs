@@ -50,8 +50,10 @@ public static class L10n
         {
             ApplicationLanguages.PrimaryLanguageOverride = lang switch
             {
-                "en" => "en-US",
-                "zh-CN" => "zh-Hans-CN",
+                // Tags match the Strings/<lang>/ folder names exactly so MRT Core
+                // resolves them without script/region fallback guesswork.
+                "en" => "en",
+                "zh-CN" => "zh-CN",
                 _ => "", // empty = follow system
             };
         }
