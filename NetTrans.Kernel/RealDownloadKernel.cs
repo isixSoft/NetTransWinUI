@@ -472,7 +472,8 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
         if (string.IsNullOrWhiteSpace(saveTo)) saveTo = DefaultDirectoryFor(task);
         // a target that already looks like a file (extension, not an existing dir) is used as-is
         if (Path.HasExtension(saveTo) && !Directory.Exists(saveTo)) return saveTo;
-        return Path.Combine(saveTo, Sanitize(task.Name));
+        var templated = FileNameTemplate.Render(_options.NameTemplate, task.Name, task.Host);
+        return Path.Combine(saveTo, templated ?? Sanitize(task.Name));
     }
 
     /// <summary>

@@ -107,6 +107,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("31a. Metalink4：priority 主源/镜像/size/hash 解析", () => MetalinkParseAsync(server));
         await RunAsync("31b. Metalink4：全链路下载 + 内嵌哈希校验 + 坏镜像剔除", () => MetalinkDownloadAsync(server));
         await RunAsync("32a. 限速档位：SetGlobalSpeedLimit(null) 中途切换立即生效", () => GlobalSwitchMidwayAsync(server));
+        await RunAsync("33a. 文件名模板：{站点}/{标题}.{ext} 落盘到模板子目录", () => NameTemplateRendersAsync(server));
+        await RunAsync("33b. 文件名模板：段内非法字符替换为下划线", () => NameTemplateSanitizesAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

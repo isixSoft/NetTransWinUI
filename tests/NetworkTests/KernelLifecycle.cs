@@ -505,4 +505,50 @@ internal sealed partial class Program
         Equal(0, kernel.AddBatch("# 只有注释\n\n", dir, 1, TaskPriority.Normal, StartNow: false).Count, "纯注释/空行 → 0 任务");
     }
 
+    // ── 33. 文件名模板（P2-3：落盘名按模板渲染，非法字符替换） ────────────
+
+    private static async Task NameTemplateRendersAsync(TestServer server)
+    {
+        var data = Payload(128 * 1024);
+        server.Map("tpl/clip.bin", server.RangeFile(data));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            NameTemplate = "{站点}/{标题}.{ext}",
+            ConnectionsPerTask = 1,
+            MaxSimultaneous = 1,
+        });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "tpl/clip.bin", dir, "", 1, TaskPriority.Normal, StartNow: true));
+
+        await WaitSignalAsync(completed.Task, "任务应完成", 60_000);
+        Equal(DownloadStatus.Completed, task.Status, "任务状态应为 Completed");
+        var expected = Path.Combine(dir, "127.0.0.1", "clip.bin"); // {站点}=uri.Host 不含端口
+        That(File.Exists(expected), $"落盘文件应按模板位于 {expected}");
+        Equal(Hash(data), Hash(File.ReadAllBytes(expected)), "模板路径下字节应完整");
+        That(!File.Exists(Path.Combine(dir, "clip.bin")), "根目录不应出现默认命名的文件");
+    }
+
+    private static async Task NameTemplateSanitizesAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("tpl/doc.bin", server.RangeFile(data));
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            NameTemplate = "{标题}?v1.{ext}", // '?' Windows 非法 → '_'
+            ConnectionsPerTask = 1,
+            MaxSimultaneous = 1,
+        });
+        var completed = NewSignal();
+        kernel.TaskCompleted += _ => completed.TrySetResult();
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "tpl/doc.bin", dir, "", 1, TaskPriority.Normal, StartNow: true));
+
+        await WaitSignalAsync(completed.Task, "任务应完成", 60_000);
+        var expected = Path.Combine(dir, "doc_v1.bin");
+        That(File.Exists(expected), $"模板段内非法字符应替换为 '_'：期望 {expected}");
+        Equal(Hash(data), Hash(File.ReadAllBytes(expected)), "非法字符替换路径下字节应完整");
+    }
+
 }

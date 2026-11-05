@@ -10,6 +10,10 @@ public sealed class AppSettings
     // 下载
     public string DefaultSavePath { get; set; } = @"D:\Downloads";
     public bool FoldersByCategory { get; set; } = true;
+
+    /// <summary>文件名模板（P2-3），如 "{站点}/{标题}.{ext}"；空 = 默认命名。</summary>
+    public string NameTemplate { get; set; } = "";
+
     public int MaxSimultaneousDownloads { get; set; } = 3;
 
     /// <summary>Global cap as shown in the dropdown ("不限", "4 MB/s", ...).</summary>

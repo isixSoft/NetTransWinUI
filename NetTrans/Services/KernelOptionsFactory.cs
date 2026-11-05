@@ -29,6 +29,7 @@ public static class KernelOptionsFactory
                 ? null
                 : settings.DefaultSavePath.Trim(),
             FoldersByCategory = settings.FoldersByCategory,
+            NameTemplate = settings.NameTemplate,
             UncappedAtNight = settings.UncappedAtNight,
             NotifyOnComplete = settings.NotifyOnCompletion,
             OffPeakStart = settings.OffPeakStart,

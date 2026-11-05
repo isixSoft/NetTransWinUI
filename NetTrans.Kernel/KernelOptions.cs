@@ -71,6 +71,13 @@ public sealed class KernelOptions
     public bool FoldersByCategory { get; set; }
 
     /// <summary>
+    /// 文件名模板（P2-3），e.g. "{站点}/{标题}.{ext}"; empty = default naming.
+    /// Rendered by <see cref="FileNameTemplate"/> when the target file name is
+    /// fixed, before the existing collision handling runs.
+    /// </summary>
+    public string NameTemplate { get; set; } = "";
+
+    /// <summary>
     /// 「夜间不限速」：while the wall clock is inside the off-peak window
     /// (<see cref="OffPeakStart"/>…<see cref="OffPeakEnd"/>) the global speed
     /// cap is lifted; per-task limits still apply.

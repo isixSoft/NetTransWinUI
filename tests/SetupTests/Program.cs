@@ -35,6 +35,7 @@ internal static class Program
         Run("13. 系统通知：开关开→sink 收到标题/正文；关→不发；null/异常不崩", NotificationContract);
         Run("14. 系统通知开关映射：NotifyOnCompletion → NotifyOnComplete", NotifyOnCompleteMapping);
         Run("15. 限速档位：默认档位/Resolve/Switch 即时下发/未知档位不动内核/往返持久化", SpeedProfilesContract);
+        Run("16. 文件名模板：占位符渲染/非法字符/未知占位符/空模板回退/工厂映射", FileNameTemplateContract);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -370,6 +371,40 @@ internal static class Program
         Equal("夜间小水管", loaded.SpeedProfiles[0].Name, "往返后档位名");
         Equal(262144L, loaded.SpeedProfiles[0].BytesPerSecond, "往返后档位限速值");
         Equal("夜间小水管", loaded.ActiveSpeedProfile, "往返后当前档位");
+    }
+
+    // ── 16. 文件名模板（P2-3） ────────────────────────────────────────────
+
+    private static void FileNameTemplateContract()
+    {
+        // 空模板 → null（内核回退默认命名）
+        Equal((string?)null, FileNameTemplate.Render(null, "video.mp4", "example.org"), "null 模板 → null");
+        Equal((string?)null, FileNameTemplate.Render("", "video.mp4", "example.org"), "空串模板 → null");
+        Equal((string?)null, FileNameTemplate.Render("   ", "video.mp4", "example.org"), "空白模板 → null");
+
+        // 占位符：{站点}=主机、{标题}=去扩展名、{ext}=扩展名（不含点）
+        Equal("video.mp4", FileNameTemplate.Render("{标题}.{ext}", "video.mp4", "example.org"), "单段模板渲染");
+        Equal("example.org-video.mp4", FileNameTemplate.Render("{站点}-{标题}.{ext}", "video.mp4", "example.org"), "{站点}-{标题}.{ext}");
+        Equal(Path.Combine("example.org", "video.mp4"),
+            FileNameTemplate.Render("{站点}/{标题}.{ext}", "video.mp4", "example.org"), "'/' 应作为子目录分隔");
+        Equal(Path.Combine("example.org", "README"),
+            FileNameTemplate.Render("{站点}/{标题}", "README", "example.org"), "无扩展名：{标题} 保持原名、{ext} 不出现");
+
+        // 非法字符：Windows 非法字符在段内替换为 '_'
+        Equal("127.0.0.1_8080", FileNameTemplate.Render("{站点}", "a.mp4", "127.0.0.1:8080"), "主机中的冒号应替换为下划线");
+        Equal("doc_v1.bin", FileNameTemplate.Render("{标题}?v1.{ext}", "doc.bin", "example.org"), "模板自带 '?' 应替换为 '_'");
+
+        // 未识别的占位符原样保留（{} 是合法文件名字符）
+        Equal("h-{未知}.mp4", FileNameTemplate.Render("{站点}-{未知}.{ext}", "a.mp4", "h"), "未知占位符应原样保留");
+
+        // 全空段（如 "///"）→ 渲染为空 → null 回退
+        Equal((string?)null, FileNameTemplate.Render("///", "a.mp4", "h"), "全空段模板 → null");
+
+        // 工厂映射：AppSettings.NameTemplate 原样进内核
+        Equal("", KernelOptionsFactory.Create(new AppSettings()).NameTemplate, "默认无模板");
+        Equal("{站点}/{标题}.{ext}",
+            KernelOptionsFactory.Create(new AppSettings { NameTemplate = "{站点}/{标题}.{ext}" }).NameTemplate,
+            "NameTemplate 原样映射");
     }
 
     // ── 基础设施 ──────────────────────────────────────────────────────────
