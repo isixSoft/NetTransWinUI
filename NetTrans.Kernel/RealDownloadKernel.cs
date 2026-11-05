@@ -511,6 +511,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
             ExpectedHash = string.IsNullOrWhiteSpace(request.ExpectedHash) ? null : request.ExpectedHash.Trim(),
             SeedRatio = request.SeedRatio,
             SeedHours = request.SeedHours,
+            SelectedFiles = request.SelectedFiles,
             // PT 底线：magnet/ed2k/torrent 链接在展示层先脱敏，原始 URL 只留给引擎
             DisplayUrl = NeedsMasking(request.Url) ? Protocol.SensitiveUrls.Mask(request.Url) : null,
         };

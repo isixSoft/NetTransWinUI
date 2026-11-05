@@ -60,6 +60,9 @@ public sealed class DownloadTask
     /// <summary>PT 做种目标小时数；null = 未指定。</summary>
     public int? SeedHours { get; set; }
 
+    /// <summary>BT per-file 选择（P1-6）：1-based 索引，aria2 --select-file 语义；null = 未选择。</summary>
+    public IReadOnlyList<int>? SelectedFiles { get; set; }
+
     /// <summary>BT/PT tracker 展示列表（已脱敏）；非 BT 任务为 null。inspector 显示用。</summary>
     public IReadOnlyList<string>? Trackers { get; set; }
 

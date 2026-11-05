@@ -31,10 +31,12 @@ public abstract record TransferPlan
     /// <summary>
     /// The data plane belongs to a host-side engine (libtorrent / aria2 / qBittorrent …).
     /// SeedRatio/SeedHours 是 PT 做种目标（分享率 / 小时数），null = 未指定；
-    /// TransferSession 会用任务参数覆盖后交给 EngineRunner / 命令模板占位符。
+    /// SelectedFiles 是 BT per-file 选择（1-based，aria2 --select-file 语义），null = 未选择；
+    /// TransferSession 会用任务参数覆盖后交给 EngineRunner / 命令模板占位符（{files}）。
     /// </summary>
     public sealed record ExternalEngine(string Engine, string Detail,
-        double? SeedRatio = null, int? SeedHours = null) : TransferPlan;
+        double? SeedRatio = null, int? SeedHours = null,
+        IReadOnlyList<int>? SelectedFiles = null) : TransferPlan;
 
     /// <summary>The resource cannot be transferred by this kernel (e.g. encrypted HLS, live stream).</summary>
     public sealed record Unsupported(string Reason) : TransferPlan;

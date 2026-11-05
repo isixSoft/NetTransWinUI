@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using NetTrans.Kernel;
 using NetTrans.Kernel.Protocol;
 
@@ -39,13 +40,16 @@ internal sealed class Program : TestKit
             await RunAsync("7.  命令模板：exit 3 → Error + 退出码 3", CommandExit3Async);
             await RunAsync("8.  命令模板：退出码 0 但无文件 → Error", CommandNoFileAsync);
             await RunAsync("9.  eD2k 计划经命令模板完成", Ed2kCommandCompletesAsync);
+            await RunAsync("11. {files}：双文件种子勾选第 1 个 → --select-file=1", FilesPlaceholderSelectsFirstFileAsync);
+            await RunAsync("12. {files}：未勾选 → 空展开", FilesPlaceholderEmptyWithoutSelectionAsync);
         }
         else
         {
-            Console.WriteLine("[SKIP] 5-9 shell 用例（Windows 宿主）");
+            Console.WriteLine("[SKIP] 5-9、11-12 shell 用例（Windows 宿主）");
         }
 
         await RunAsync("10. 未配置引擎：保持原槽位错误文案", NoEngineHonestErrorAsync);
+        await RunAsync("13. SelectedFiles：透传 runner 计划", SelectedFilesReachRunnerPlanAsync);
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
@@ -287,6 +291,83 @@ internal sealed class Program : TestKit
         That(LogSnapshot(task).Any(m => m.Contains("下载失败：" + HonestSlotError)), "失败文案应进入任务日志");
     }
 
+    // ── 11-13. BT per-file 选择：{files} 占位符（P1-6）───────────────────
+
+    private static async Task FilesPlaceholderSelectsFirstFileAsync()
+    {
+        var torrent = WriteTwoFileTorrent();
+        // fixture 先解析核对：确保种子确为双文件（a.txt=100 / b.txt=200）
+        using (var http = new HttpClient())
+        {
+            var registry = new ProtocolDriverRegistry(new KernelOptions(), http);
+            var probe = await registry.ProbeAsync(torrent, null, null, default);
+            Equal("dual", probe.Name, "双文件种子应解析出 info.name");
+            Equal(300L, probe.Size, "双文件大小之和应为 300");
+        }
+
+        var data = Payload(1024);
+        var fixture = WriteFixture(data);
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            MaxSimultaneous = 1,
+            ExternalEngineCommand = $"printf '%s' \"{{files}}\" > \"{{path}}.sel\" && cp '{fixture}' \"{{path}}\"",
+        });
+        var task = kernel.Add(new NewDownloadRequest(torrent, dir, "", 1, TaskPriority.Normal, StartNow: true,
+            SelectedFiles: new[] { 1 }));
+        await WaitTerminalAsync(task);
+
+        Equal(DownloadStatus.Completed, task.Status, "勾选文件的 BT 任务应完成");
+        Equal("--select-file=1", File.ReadAllText(Path.Combine(dir, "dual.sel")),
+            "{files} 应展开为 aria2 语义的 --select-file 索引（勾选第 1 个文件）");
+    }
+
+    private static async Task FilesPlaceholderEmptyWithoutSelectionAsync()
+    {
+        var torrent = WriteTwoFileTorrent();
+        var data = Payload(512);
+        var fixture = WriteFixture(data);
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            MaxSimultaneous = 1,
+            ExternalEngineCommand = $"printf '%s' \"{{files}}\" > \"{{path}}.sel\" && cp '{fixture}' \"{{path}}\"",
+        });
+        var task = kernel.Add(new NewDownloadRequest(torrent, dir, "", 1, TaskPriority.Normal, StartNow: true));
+        await WaitTerminalAsync(task);
+
+        Equal(DownloadStatus.Completed, task.Status, "未勾选文件的 BT 任务应完成");
+        Equal(string.Empty, File.ReadAllText(Path.Combine(dir, "dual.sel")),
+            "未勾选时 {files} 应展开为空（模板自行决定是否携带参数）");
+    }
+
+    private static async Task SelectedFilesReachRunnerPlanAsync()
+    {
+        var torrent = WriteTwoFileTorrent();
+        var data = Payload(2048);
+        IReadOnlyList<int>? planSelection = null;
+        var dir = TempDir();
+        using var kernel = new RealDownloadKernel(new KernelOptions
+        {
+            MaxSimultaneous = 1,
+            EngineRunner = (plan, path, _) =>
+            {
+                planSelection = ((TransferPlan.ExternalEngine)plan).SelectedFiles;
+                File.WriteAllBytes(path, data);
+                return Task.FromResult(true);
+            },
+        });
+        var task = kernel.Add(new NewDownloadRequest(torrent, dir, "", 1, TaskPriority.Normal, StartNow: true,
+            SelectedFiles: new[] { 2, 1 }));
+        await WaitTerminalAsync(task);
+
+        Equal(DownloadStatus.Completed, task.Status, "runner 通路应完成");
+        That(planSelection is not null, "runner 收到的计划应携带 SelectedFiles");
+        Equal(2, planSelection!.Count, "选择数量应透传");
+        Equal(2, planSelection[0], "索引按用户勾选顺序透传");
+        Equal(1, planSelection[1], "索引按用户勾选顺序透传");
+    }
+
     // ── 基础设施 ──────────────────────────────────────────────────────────
 
     private static async Task RunAsync(string name, Func<Task> body)
@@ -329,6 +410,34 @@ internal sealed class Program : TestKit
         File.WriteAllBytes(path, data);
         return path;
     }
+
+    /// <summary>手工 bencode 双文件种子：info.name=dual，a.txt=100 / b.txt=200。</summary>
+    private static string WriteTwoFileTorrent()
+    {
+        var fileA = BDict(("length", BInt(100)), ("path", BList(BString("a.txt"))));
+        var fileB = BDict(("length", BInt(200)), ("path", BList(BString("b.txt"))));
+        var info = BDict(("files", BList(fileA, fileB)), ("name", BString("dual")));
+        var torrent = BDict(("announce", BString("http://tracker.example.org/announce")), ("info", info));
+        var path = Path.Combine(TempDir(), "dual.torrent");
+        File.WriteAllBytes(path, torrent);
+        return path;
+    }
+
+    private static byte[] BString(string s)
+    {
+        var text = Encoding.UTF8.GetBytes(s);
+        return Encoding.ASCII.GetBytes($"{text.Length}:").Concat(text).ToArray();
+    }
+
+    private static byte[] BInt(long value) => Encoding.ASCII.GetBytes($"i{value}e");
+
+    private static byte[] BList(params byte[][] items) =>
+        items.Aggregate(Encoding.ASCII.GetBytes("l"), (acc, item) => acc.Concat(item).ToArray())
+             .Concat(Encoding.ASCII.GetBytes("e")).ToArray();
+
+    private static byte[] BDict(params (string Key, byte[] Value)[] pairs) =>
+        pairs.Aggregate(Encoding.ASCII.GetBytes("d"), (acc, pair) => acc.Concat(BString(pair.Key)).Concat(pair.Value).ToArray())
+             .Concat(Encoding.ASCII.GetBytes("e")).ToArray();
 
     private static async Task WaitTerminalAsync(DownloadTask task, int timeoutMs = 15_000) =>
         await WaitAsync(

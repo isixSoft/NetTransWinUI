@@ -82,6 +82,9 @@ public sealed class TransferRequest
     public double? SeedRatio { get; init; }
     public int? SeedHours { get; init; }
 
+    /// <summary>BT per-file 选择（P1-6）：1-based 索引；供 runner 计划与模板 {files} 使用。</summary>
+    public IReadOnlyList<int>? SelectedFiles { get; init; }
+
     public LogSink? Log { get; init; }
 }
 

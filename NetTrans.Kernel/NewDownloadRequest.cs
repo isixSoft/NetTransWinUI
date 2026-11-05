@@ -13,6 +13,8 @@ namespace NetTrans.Kernel;
 /// <param name="Queue">队列分组名（P0-3）；空 = 不属于任何命名队列，定时调度不触碰。</param>
 /// <param name="CookieFile">Netscape cookies.txt 路径（P1-1）：按域匹配注入 Cookie 头；
 /// 显式 Headers["Cookie"] 优先，全局 KernelOptions.CookieFile 兜底。null = 不导入。</param>
+/// <param name="SelectedFiles">BT per-file 选择（P1-6）：种子 info.files 的 1-based 索引
+/// （aria2 --select-file 语义，按勾选顺序透传）；null/空 = 不选择（{files} 展开为空）。</param>
 public sealed record NewDownloadRequest(
     string Url,
     string SaveTo,
@@ -28,4 +30,5 @@ public sealed record NewDownloadRequest(
     AfterCompletion OnComplete = AfterCompletion.None,
     string? OnCompleteCommand = null,
     string Queue = "",
-    string? CookieFile = null);
+    string? CookieFile = null,
+    IReadOnlyList<int>? SelectedFiles = null);

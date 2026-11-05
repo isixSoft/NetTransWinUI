@@ -318,6 +318,7 @@ public sealed partial class RealDownloadKernel
             TaskName = task.Name,
             SeedRatio = task.SeedRatio,
             SeedHours = task.SeedHours,
+            SelectedFiles = task.SelectedFiles,
         });
     }
 

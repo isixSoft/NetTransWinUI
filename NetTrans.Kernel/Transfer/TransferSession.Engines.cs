@@ -18,19 +18,21 @@ public sealed partial class TransferSession
     /// <summary>
     /// The deliberate engine slot: moving bytes for BT / eD2k needs a
     /// host-side engine, injected either as a runner delegate or as a shell
-    /// command template ({url} {path} {name} {seed-ratio} {seed-time}). Success means
-    /// the engine produced the file at the save path — reported exactly like a finished
-    /// byte transfer; with neither slot configured the plan still fails honestly.
+    /// command template ({url} {path} {name} {seed-ratio} {seed-time} {files}).
+    /// Success means the engine produced the file at the save path — reported
+    /// exactly like a finished byte transfer; with neither slot configured the
+    /// plan still fails honestly.
     /// </summary>
     private async Task<TransferOutcome> RunExternalEngineAsync(TransferPlan.ExternalEngine plan, CancellationToken cancellation)
     {
         Log($"外部引擎接管：{plan.Engine}");
 
-        // PT 做种目标：任务参数优先，种子/驱动默认值兜底
+        // PT 做种目标 + BT per-file 选择：任务参数优先，种子/驱动默认值兜底
         var seededPlan = plan with
         {
             SeedRatio = _request.SeedRatio ?? plan.SeedRatio,
             SeedHours = _request.SeedHours ?? plan.SeedHours,
+            SelectedFiles = _request.SelectedFiles ?? plan.SelectedFiles,
         };
 
         if (_request.EngineRunner is { } runner)
@@ -66,12 +68,14 @@ public sealed partial class TransferSession
     {
         // PT 做种占位符：{seed-ratio} 分享率、{seed-time} 小时数；
         // 未设置时替换为 0（aria2 语义：不限做种），模板自行决定是否携带。
+        // {files}：BT per-file 选择（P1-6）展开为 --select-file=索引，未勾选为空。
         string command = (_request.ExternalEngineCommand ?? string.Empty)
             .Replace("{url}", _request.TaskUrl ?? string.Empty)
             .Replace("{path}", _request.SavePath)
             .Replace("{name}", _request.TaskName ?? string.Empty)
             .Replace("{seed-ratio}", (plan.SeedRatio ?? 0).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))
-            .Replace("{seed-time}", (plan.SeedHours ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            .Replace("{seed-time}", (plan.SeedHours ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("{files}", SelectFileArg(plan.SelectedFiles));
         // PT 底线：magnet/tracker 里的 passkey 不进日志
         Log($"执行外部命令：{SensitiveUrls.Mask(command)}");
 
@@ -144,5 +148,9 @@ public sealed partial class TransferSession
     }
 
     private static string FirstLine(string text) => text.Split('\n', 2)[0].TrimEnd('\r').Trim();
+
+    /// <summary>{files} 展开：勾选索引按 aria2 --select-file 语义拼参，未勾选为空。</summary>
+    private static string SelectFileArg(IReadOnlyList<int>? selected) =>
+        selected is { Count: > 0 } ? $"--select-file={string.Join(",", selected)}" : string.Empty;
 
 }
