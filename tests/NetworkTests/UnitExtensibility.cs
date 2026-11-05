@@ -124,6 +124,23 @@ internal sealed partial class Program
         throw new Exception($"{what}：未抛出 {typeof(TException).Name}");
     }
 
+    private static void AssertThrows<TException>(Action body, string what) where TException : Exception
+    {
+        try
+        {
+            body();
+        }
+        catch (TException)
+        {
+            return;
+        }
+        catch (Exception error)
+        {
+            throw new Exception($"{what}：抛出了 {error.GetType().Name}（{error.Message}）而非 {typeof(TException).Name}");
+        }
+        throw new Exception($"{what}：未抛出 {typeof(TException).Name}");
+    }
+
     // ── 16. 单元扩容：SegmentTable / checkpoint / ChunkedFileWriter ───────
 
     private static Task SegmentSplitUnitAsync()

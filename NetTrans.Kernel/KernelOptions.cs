@@ -146,4 +146,10 @@ public sealed class KernelOptions
     /// 日志，不影响任务状态。校验失败（Error）不触发。null = 未配置动作时无事发生。
     /// </summary>
     public Func<CompletionEvent, CancellationToken, Task>? CompletionRunner { get; set; }
+
+    /// <summary>
+    /// 可注入时钟（队列定时启停 P0-3 用）：null = 系统时钟。测试注入固定/可控
+    /// 时间验证启停边界（含跨午夜窗口），不真等钟点。
+    /// </summary>
+    public Func<DateTime>? Clock { get; set; }
 }

@@ -493,6 +493,7 @@ public sealed partial class RealDownloadKernel : IDownloadKernel
             Kind = kind,
             Size = 0,
             Category = request.Category.Length > 0 ? request.Category : CategoryFor(kind, isTorrent),
+            Queue = request.Queue,
             Tint = TintFor(kind),
             Url = request.Url,
             SavePath = request.SaveTo,

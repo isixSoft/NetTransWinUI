@@ -343,4 +343,112 @@ internal sealed partial class Program
         Equal(1, events.Count, "c2 无动作，不应再触发");
     }
 
+    // ── 23. 队列分组与定时启停（P0-3：可注入时钟，跨午夜窗口） ───────────
+
+    private static async Task QueueScheduleStartAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        server.Map("queue/a1.zip", server.RangeFile(data));
+        server.Map("queue/a2.zip", server.RangeFile(data));
+        server.Map("queue/a3.zip", server.RangeFile(data));
+        server.Map("queue/out.zip", server.RangeFile(data));
+
+        var clock = new DateTime(2026, 11, 5, 7, 59, 0);
+        var options = new KernelOptions { MaxSimultaneous = 2, Clock = () => clock };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        kernel.SetQueueSchedule("夜间队", start: "08:00", stop: null);
+        var a1 = kernel.Add(new NewDownloadRequest(server.Base + "queue/a1.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "夜间队"));
+        var a2 = kernel.Add(new NewDownloadRequest(server.Base + "queue/a2.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "夜间队"));
+        var a3 = kernel.Add(new NewDownloadRequest(server.Base + "queue/a3.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "夜间队"));
+        var outside = kernel.Add(new NewDownloadRequest(server.Base + "queue/out.zip", dir, "", 2, TaskPriority.Normal, StartNow: false));
+
+        kernel.EvaluateQueueSchedules(); // 07:59 未到点
+        That(new[] { a1, a2, a3, outside }.All(t => t.Status == DownloadStatus.Paused), "未到点不应启动任何任务");
+
+        clock = new DateTime(2026, 11, 5, 8, 0, 0);
+        kernel.EvaluateQueueSchedules(); // 到点：A 内批量开始，并发槽语义不变
+        await WaitAsync(() => a1.Status == DownloadStatus.Downloading && a2.Status == DownloadStatus.Downloading,
+            "A 内任务应批量进入运行态", 30_000);
+        Equal(DownloadStatus.Queued, a3.Status, "第三个任务按并发槽排队（语义不变）");
+        Equal(DownloadStatus.Paused, outside.Status, "队列外任务不受调度影响");
+        That(a1.Log.Any(l => l.Message.Contains("批量开始")), "应有批量开始日志");
+    }
+
+    private static async Task QueueScheduleMidnightAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        var gateA = new ManualResetEventSlim(false);
+        var gateOut = new ManualResetEventSlim(false);
+        server.Map("mid/a1.zip", server.RangeFile(data, onGet: (_, _) => { gateA.Wait(20_000); return false; }));
+        server.Map("mid/a2.zip", server.RangeFile(data));
+        server.Map("mid/out.zip", server.RangeFile(data, onGet: (_, _) => { gateOut.Wait(20_000); return false; }));
+
+        var clock = new DateTime(2026, 11, 5, 22, 59, 0);
+        var options = new KernelOptions { MaxSimultaneous = 4, Clock = () => clock };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        kernel.SetQueueSchedule("跨夜队", start: "23:00", stop: "07:00"); // 跨午夜窗口 [23:00, 07:00)
+        var a1 = kernel.Add(new NewDownloadRequest(server.Base + "mid/a1.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "跨夜队"));
+        var a2 = kernel.Add(new NewDownloadRequest(server.Base + "mid/a2.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "跨夜队"));
+        var outside = kernel.Add(new NewDownloadRequest(server.Base + "mid/out.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
+
+        // 22:59：窗口外（22:59 ≥ 07:00 且 < 23:00）→ 队列任务保持暂停；队列外任务照常下载
+        kernel.EvaluateQueueSchedules();
+        That(a1.Status == DownloadStatus.Paused && a2.Status == DownloadStatus.Paused, "22:59 在窗口外不应启动");
+        await WaitAsync(() => outside.Status == DownloadStatus.Downloading, "队列外任务应照常下载", 30_000);
+
+        // 23:00：入窗 → 队列任务批量开始
+        clock = new DateTime(2026, 11, 5, 23, 0, 0);
+        kernel.EvaluateQueueSchedules();
+        await WaitAsync(() => a1.Status == DownloadStatus.Downloading, "23:00 入窗应启动（门闩钉住）", 30_000);
+        That(a2.Status != DownloadStatus.Paused, "a2 也应被批量开始（可能已完成）");
+
+        // 06:59：仍在窗口内（跨午夜）→ 不打断
+        clock = new DateTime(2026, 11, 6, 6, 59, 0);
+        kernel.EvaluateQueueSchedules();
+        Equal(DownloadStatus.Downloading, a1.Status, "06:59 仍在窗口内不应暂停");
+
+        // 07:00：出窗 → 队列任务批量暂停；队列外下载中的任务不受影响
+        clock = new DateTime(2026, 11, 6, 7, 0, 0);
+        kernel.EvaluateQueueSchedules();
+        Equal(DownloadStatus.Paused, a1.Status, "07:00 出窗应批量暂停");
+        That(a1.Log.Any(l => l.Message.Contains("批量暂停")), "应有批量暂停日志");
+        Equal(DownloadStatus.Downloading, outside.Status, "队列外下载中的任务不受停止窗口影响");
+
+        gateA.Set();
+        gateOut.Set();
+    }
+
+    private static async Task QueueScheduleStopOnlyAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        var gate = new ManualResetEventSlim(false);
+        server.Map("stop/a1.zip", server.RangeFile(data, onGet: (_, _) => { gate.Wait(20_000); return false; }));
+        server.Map("stop/a2.zip", server.RangeFile(data));
+
+        var clock = new DateTime(2026, 11, 5, 10, 0, 0);
+        var options = new KernelOptions { MaxSimultaneous = 4, Clock = () => clock };
+        using var kernel = new RealDownloadKernel(options);
+        var dir = TempDir();
+        // 仅设停止时间 → 有效窗口 [00:00, 22:00)，窗口内照常运行
+        kernel.SetQueueSchedule("下班队", start: null, stop: "22:00");
+        var a1 = kernel.Add(new NewDownloadRequest(server.Base + "stop/a1.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "下班队"));
+        var a2 = kernel.Add(new NewDownloadRequest(server.Base + "stop/a2.zip", dir, "", 2, TaskPriority.Normal, StartNow: false, Queue: "下班队"));
+
+        kernel.EvaluateQueueSchedules(); // 10:00 在窗口内 → 批量开始
+        await WaitAsync(() => a1.Status == DownloadStatus.Downloading, "窗口内暂停任务应批量开始", 30_000);
+
+        clock = new DateTime(2026, 11, 5, 22, 0, 0);
+        kernel.EvaluateQueueSchedules(); // 22:00 出窗 → 下载中的任务批量暂停
+        Equal(DownloadStatus.Paused, a1.Status, "到停止时间应暂停下载中的任务");
+
+        // 非法调度直接拒绝，不落库
+        AssertThrows<FormatException>(() => kernel.SetQueueSchedule("坏队", "25:00", null), "小时应 <24");
+        AssertThrows<FormatException>(() => kernel.SetQueueSchedule("坏队", "abc", null), "须为 HH:mm");
+        AssertThrows<FormatException>(() => kernel.SetQueueSchedule("坏队", "08:60", null), "分钟应 <60");
+
+        gate.Set();
+    }
+
 }

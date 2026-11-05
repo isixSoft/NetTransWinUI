@@ -66,6 +66,102 @@ public sealed partial class RealDownloadKernel
         }
 
         Ticked?.Invoke(snapshot);
+
+        // 队列定时启停（P0-3）：每个 tick 顺带评估一次；锁在方法内部短暂持有
+        EvaluateQueueSchedules();
+    }
+
+    // ── 队列定时启停（P0-3） ──────────────────────────────────────────────
+
+    private sealed record QueueSchedule(string? Start, string? Stop);
+
+    private readonly Dictionary<string, QueueSchedule> _queueSchedules = new(StringComparer.Ordinal);
+
+    private DateTime Now() => _options.Clock?.Invoke() ?? DateTime.Now;
+
+    /// <summary>
+    /// 设置一条队列的定时启停窗口（HH:mm 24 小时制，可跨午夜）。start/stop 都
+    /// 为 null = 取消调度。有效窗口：start 缺省视为 00:00，stop 缺省视为 24:00，
+    /// start &gt; stop 即跨午夜（如 23:00→07:00 表示 [23:00, 次日 07:00)）。
+    /// 窗口内：队列内暂停任务批量开始；窗口外：队列内排队/下载中任务批量暂停。
+    /// 不属于任何已调度队列的任务一概不受影响。
+    /// </summary>
+    public void SetQueueSchedule(string queue, string? start, string? stop)
+    {
+        if (string.IsNullOrWhiteSpace(queue)) throw new ArgumentException("队列名不能为空", nameof(queue));
+        ParseHm(start); // 先验证再入库：坏 HH:mm 直接拒绝
+        ParseHm(stop);
+        lock (_gate)
+        {
+            if (start is null && stop is null) _queueSchedules.Remove(queue);
+            else _queueSchedules[queue] = new QueueSchedule(start, stop);
+        }
+    }
+
+    /// <summary>
+    /// 评估所有队列调度（900ms tick 每次顺带调用；测试经注入时钟直接调用保证
+    /// 确定性）。状态迁移在锁内完成，批量开始后经 Schedule() 按并发槽调度。
+    /// </summary>
+    public void EvaluateQueueSchedules()
+    {
+        List<(DownloadTask Task, bool Start)>? changes = null;
+        lock (_gate)
+        {
+            if (_queueSchedules.Count == 0) return;
+            var now = Now().TimeOfDay;
+
+            foreach (var (queue, schedule) in _queueSchedules)
+            {
+                bool inWindow = InWindow(now, schedule);
+                foreach (var task in _tasks)
+                {
+                    if (!string.Equals(task.Queue, queue, StringComparison.Ordinal)) continue;
+
+                    if (inWindow && task.Status == DownloadStatus.Paused)
+                    {
+                        task.Status = DownloadStatus.Queued;
+                        task.ErrorMessage = null;
+                        _allCompleteFired = false; // 又有工作进入队列，收尾动作可再次触发
+                        (changes ??= new()).Add((task, true));
+                    }
+                    else if (!inWindow && task.Status is DownloadStatus.Queued or DownloadStatus.Downloading)
+                    {
+                        var runtime = _runtimes[task.Id];
+                        task.Status = DownloadStatus.Paused;
+                        task.Speed = 0;
+                        task.Connections = 0;
+                        task.ConnectionSpeeds = Array.Empty<double>();
+                        runtime.Cts?.Cancel();
+                        (changes ??= new()).Add((task, false));
+                    }
+                }
+            }
+        }
+
+        if (changes is null) return;
+        foreach (var (task, start) in changes)
+        {
+            Log(task, start ? "队列调度：到达开始时间，批量开始" : "队列调度：到达停止时间，批量暂停");
+            TaskUpdated?.Invoke(task);
+        }
+        Schedule();
+    }
+
+    /// <summary>跨午夜窗口判定：[start, stop) 语义，start &gt; stop 视为跨午夜。</summary>
+    private static bool InWindow(TimeSpan now, QueueSchedule schedule)
+    {
+        var start = ParseHm(schedule.Start) ?? TimeSpan.Zero;
+        var end = ParseHm(schedule.Stop) ?? TimeSpan.FromDays(1);
+        return start <= end ? now >= start && now < end : now >= start || now < end;
+    }
+
+    private static TimeSpan? ParseHm(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (!TimeSpan.TryParseExact(value, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out var time) ||
+            time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+            throw new FormatException($"时间须为 HH:mm（24 小时制，<24:00）：{value}");
+        return time;
     }
 
     // ── limits ────────────────────────────────────────────────────────────

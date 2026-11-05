@@ -83,6 +83,9 @@ internal sealed partial class Program : TestKit
         await RunAsync("22a. 完成后动作：任务级 runner 恰一次 + 事件字段", () => CompletionActionTaskAsync(server));
         await RunAsync("22b. 完成后动作：全局「全部完成」才收尾触发", () => CompletionActionAllAsync(server));
         await RunAsync("22c. 完成后动作：异常 runner 不崩内核 + 命令展开", () => CompletionActionErrorAsync(server));
+        await RunAsync("23a. 队列调度：到点批量开始/并发槽语义/队列外不受影响", () => QueueScheduleStartAsync(server));
+        await RunAsync("23b. 队列调度：跨午夜窗口边界（22:59/23:00/06:59/07:00）", () => QueueScheduleMidnightAsync(server));
+        await RunAsync("23c. 队列调度：仅停止时间窗口 + 非法 HH:mm 拒绝", () => QueueScheduleStopOnlyAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

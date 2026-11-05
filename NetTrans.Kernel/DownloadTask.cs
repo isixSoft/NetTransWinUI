@@ -25,6 +25,9 @@ public sealed class DownloadTask
     /// <summary>soft | video | doc | music | bt -- the category chips.</summary>
     public required string Category { get; init; }
 
+    /// <summary>队列分组名（P0-3 调度单位）；空串 = 不属于任何命名队列，调度永不触碰。</summary>
+    public string Queue { get; init; } = "";
+
     /// <summary>The tile colour. Defaults per kind, but the seed data overrides it per task.</summary>
     public string Tint { get; init; } = "#8E8E93";
 
