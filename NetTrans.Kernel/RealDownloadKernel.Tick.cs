@@ -244,6 +244,22 @@ public sealed partial class RealDownloadKernel
         try
         {
             var path = TargetPathFor(task, runtime);
+            // P1-2 边车哈希：任务未显式给期望指纹时，自动读取同名 .md5/.sha256
+            // （本地保存目录优先，其次发布页同路径 URL+.md5/.sha256）；读不到静默跳过。
+            if (task.ExpectedHash is null)
+            {
+                var (sidecar, source) = await ResolveSidecarHashAsync(task, path);
+                if (sidecar is not null)
+                {
+                    lock (_gate)
+                    {
+                        task.ExpectedHash = sidecar;
+                        task.Log.Add(new LogEntry(Stamp(),
+                            $"已读取边车指纹（{source}）：{sidecar[..Math.Min(16, sidecar.Length)]}…"));
+                    }
+                }
+            }
+
             var algorithm = Checksums.DetectAlgorithm(task.ExpectedHash) ?? "SHA-256";
             var hash = await Task.Run(() => Checksums.Compute(algorithm, path));
 
@@ -284,6 +300,51 @@ public sealed partial class RealDownloadKernel
         {
             lock (_gate) task.Log.Add(new LogEntry(Stamp(), $"校验失败：{error.Message}", IsError: true));
         }
+    }
+
+    /// <summary>
+    /// 边车指纹解析（P1-2）：本地保存目录的任务名 + .md5/.sha256 优先（用户把
+    /// 校验清单放在旁边，零网络成本），其次发布页同路径 URL + .md5/.sha256
+    /// （GitHub releases 风格；仅 http(s)，10s 超时，任何失败静默当没有）。
+    /// </summary>
+    private async Task<(string? Hash, string Source)> ResolveSidecarHashAsync(DownloadTask task, string path)
+    {
+        foreach (var suffix in new[] { ".md5", ".sha256" })
+        {
+            var sidecarPath = path + suffix;
+            if (!File.Exists(sidecarPath)) continue;
+            try
+            {
+                var hash = Checksums.ParseSidecar(File.ReadAllText(sidecarPath));
+                if (hash is not null) return (hash, Path.GetFileName(sidecarPath));
+            }
+            catch
+            {
+                // 边车读不出来当没有
+            }
+        }
+
+        if (Uri.TryCreate(task.Url, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            foreach (var suffix in new[] { ".md5", ".sha256" })
+            {
+                try
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    using var response = await _http.GetAsync(task.Url + suffix, timeout.Token);
+                    if (!response.IsSuccessStatusCode) continue;
+                    var hash = Checksums.ParseSidecar(await response.Content.ReadAsStringAsync(timeout.Token));
+                    if (hash is not null) return (hash, uri.Segments[^1] + suffix);
+                }
+                catch
+                {
+                    // 网络/解析失败当没有
+                }
+            }
+        }
+
+        return (null, "");
     }
 
     private string CheckpointPath(string savePath) => savePath + _options.CheckpointSuffix;

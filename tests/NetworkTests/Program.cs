@@ -66,6 +66,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("17a. Checksums：算法识别 + 校验清单解析（单元）", ChecksumsUnitAsync);
         await RunAsync("17b. 期望哈希校验：MD5/SHA-256 匹配与不匹配", () => ExpectedHashAsync(server));
         await RunAsync("17c. 本地签名库：历史指纹记录/一致/变化 + 持久化", () => HashDatabaseAsync(server));
+        await RunAsync("17d. 边车哈希：远端 .sha256/.md5 自动读取 + 失败态保留", () => SidecarRemoteAsync(server));
+        await RunAsync("17e. 边车哈希：本地同名边车优先 + ParseSidecar 单元", () => SidecarLocalUnitAsync(server));
         await RunAsync("18a. SensitiveUrls：passkey/token 脱敏（单元）", SensitiveUrlsUnitAsync);
         await RunAsync("18b. PT magnet：展示脱敏 + tracker 列表 + 原始 URL 保留", () => PtMagnetAsync(server));
         await RunAsync("18c. PT 种子：tracker 脱敏 + 做种占位符渲染", () => PtTorrentSeedAsync(server));

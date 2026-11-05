@@ -79,6 +79,30 @@ public static partial class Checksums
         return byName.Values.ToList();
     }
 
+    /// <summary>
+    /// 解析边车校验文件内容（发布页同名 .md5/.sha256 的三种常见样式）：
+    /// ① 纯哈希（<c>sha256sum 文件 &gt; 文件.sha256</c> 之外的极简发布）；
+    /// ② GNU 行「&lt;hash&gt;  文件名」；③ BSD 行「SHA256 (文件) = &lt;hash&gt;」。
+    /// 命中返回小写哈希（算法按长度判别，不看扩展名）；无法识别返回 null。
+    /// </summary>
+    public static string? ParseSidecar(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        if (DetectAlgorithm(content) is not null) return content.Trim().ToLowerInvariant();
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r').Trim();
+            if (line.Length == 0) continue;
+            var bsd = BsdLine().Match(line);
+            if (bsd.Success && DetectAlgorithm(bsd.Groups[3].Value) is not null)
+                return bsd.Groups[3].Value.ToLowerInvariant();
+            var field = line.Split(' ', '\t', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (field is not null && DetectAlgorithm(field) is not null)
+                return field.ToLowerInvariant();
+        }
+        return null;
+    }
+
     /// <summary>剥 * 二进制标记、./ 前缀，统一 / 分隔 —— 与清单文件常见写法对齐。</summary>
     private static string NormalizeName(string name)
     {

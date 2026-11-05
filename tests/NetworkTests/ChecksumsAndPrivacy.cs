@@ -147,6 +147,126 @@ internal sealed partial class Program
         }
     }
 
+    // ── 17d/17e. 边车哈希（P1-2）：同名 .md5/.sha256 自动读取 ─────────────
+
+    private static async Task SidecarRemoteAsync(TestServer server)
+    {
+        var okSha = Payload(96 * 1024);
+        var okMd5 = Payload(64 * 1024);
+        var bad = Payload(48 * 1024);
+        var bare = Payload(16 * 1024);
+        server.Map("side/oksha.bin", server.RangeFile(okSha, etag: "\"side-sha\""));
+        server.Map("side/okmd5.bin", server.RangeFile(okMd5, etag: "\"side-md5\""));
+        server.Map("side/bad.bin", server.RangeFile(bad, etag: "\"side-bad\""));
+        server.Map("side/bare.bin", server.RangeFile(bare, etag: "\"side-bare\""));
+
+        var shaHex = Convert.ToHexString(SHA256.HashData(okSha)).ToLowerInvariant();
+        var md5Hex = Convert.ToHexString(MD5.HashData(okMd5)).ToLowerInvariant();
+        // GNU coreutils 清单行（sha256sum 输出样式）
+        server.Map("side/oksha.bin.sha256", ctx =>
+            TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes($"{shaHex}  oksha.bin\n"), "text/plain"));
+        // 纯哈希（极简发布页样式）
+        server.Map("side/okmd5.bin.md5", ctx =>
+            TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(md5Hex), "text/plain"));
+        // 错哈希边车（发布页抄错指纹的样式）
+        server.Map("side/bad.bin.sha256", ctx =>
+            TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(new string('0', 64)), "text/plain"));
+
+        // 远端 .sha256 边车：自动读取 → 匹配 → Completed + TaskCompleted 恰一次
+        int completed = 0;
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 }))
+        {
+            kernel.TaskCompleted += _ => Interlocked.Increment(ref completed);
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/oksha.bin", TempDir(), "", 2,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "边车匹配任务应完成", 30_000);
+            Equal(shaHex, task.ExpectedHash, "边车指纹应回填到任务");
+            Equal("SHA-256 已校验", task.Checksum, "边车校验应标注「SHA-256 已校验」");
+            That(task.Log.Any(l => l.Message.Contains("边车")),
+                $"日志应说明指纹来自边车（实际：{string.Join(" | ", task.Log.Select(l => l.Message))}）");
+            await WaitAsync(() => Volatile.Read(ref completed) == 1, "TaskCompleted 应触发恰一次", 5_000);
+        }
+
+        // 远端 .md5 边车（纯哈希格式）：按 MD5 校验
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/okmd5.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "MD5 边车任务应完成", 30_000);
+            Equal(md5Hex, task.ExpectedHash, ".md5 边车指纹应回填");
+            Equal("MD5 已校验", task.Checksum, "32 位边车指纹应按 MD5 校验");
+        }
+
+        // 边车不匹配：Error + 错误含期望/实际两哈希 + 已下载文件保留不覆盖
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var dir = TempDir();
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/bad.bin", dir, "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Error, "边车不匹配应转 Error", 30_000);
+            That(task.ErrorMessage!.Contains("校验失败") && task.ErrorMessage!.Contains("期望") && task.ErrorMessage!.Contains("实际"),
+                $"错误信息应含期望/实际哈希（实际「{task.ErrorMessage}」）");
+            var kept = Path.Combine(dir, task.Name);
+            That(File.Exists(kept) && new FileInfo(kept).Length == bad.Length,
+                "失败态必须保留已下载文件（失败态不覆盖）");
+            That(task.Log.Any(l => l.IsError), "日志应有失败行");
+        }
+
+        // 无边车任务完全不受影响：不伪造期望指纹、照常完成
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/bare.bin", TempDir(), "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "无边车任务应照常完成", 30_000);
+            Equal(null, (object?)task.ExpectedHash, "无边车时不应伪造期望指纹");
+        }
+    }
+
+    private static async Task SidecarLocalUnitAsync(TestServer server)
+    {
+        // ParseSidecar 单元：纯哈希 / GNU 行 / BSD 行 / 规范化 / 拒绝路径
+        var hex = "a1b2c3d4" + new string('e', 56);
+        Equal(hex, Checksums.ParseSidecar(hex), "纯哈希直接返回");
+        Equal(hex, Checksums.ParseSidecar(hex.ToUpperInvariant() + "\n"), "大写与尾换行规范化为小写");
+        Equal(hex, Checksums.ParseSidecar($"{hex}  setup.iso\r\n"), "GNU 行取首字段");
+        Equal(hex, Checksums.ParseSidecar($"SHA256 (setup.iso) = {hex}\n"), "BSD 行取等号后字段");
+        Equal(null, Checksums.ParseSidecar(null), "null → null");
+        Equal(null, Checksums.ParseSidecar("   \n\n"), "空白 → null");
+        Equal(null, Checksums.ParseSidecar("# generated\nreadme.txt  安装说明\n"), "无哈希行 → null");
+
+        var data = Payload(80 * 1024);
+        var wrongSha = new string('f', 64);
+        server.Map("side/local.bin", server.RangeFile(data, etag: "\"side-local\""));
+        server.Map("side/both.bin", server.RangeFile(data, etag: "\"side-both\""));
+        // 远端边车是错哈希：本地同名边车必须赢（本地优先）
+        server.Map("side/both.bin.sha256", ctx =>
+            TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(wrongSha), "text/plain"));
+        var shaHex = Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+
+        // 本地保存目录同名 .sha256（GNU 行）→ 自动读取并校验
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var dir = TempDir();
+            File.WriteAllText(Path.Combine(dir, "local.bin.sha256"), $"{shaHex}  local.bin\n");
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/local.bin", dir, "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "本地边车任务应完成", 30_000);
+            Equal(shaHex, task.ExpectedHash, "本地边车指纹应回填");
+            Equal("SHA-256 已校验", task.Checksum, "本地边车应参与校验");
+        }
+
+        // 本地边车优先于远端：远端错哈希不得把任务拖进 Error
+        using (var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 1, MaxSimultaneous = 1 }))
+        {
+            var dir = TempDir();
+            File.WriteAllText(Path.Combine(dir, "both.bin.sha256"), $"{shaHex}  both.bin\n");
+            var task = kernel.Add(new NewDownloadRequest(server.Base + "side/both.bin", dir, "", 1,
+                TaskPriority.Normal, StartNow: true));
+            await WaitAsync(() => task.Status == DownloadStatus.Completed, "本地边车应优先于远端", 30_000);
+            Equal(shaHex, task.ExpectedHash, "应以本地边车指纹为准");
+        }
+    }
+
     // ── 18. PT 支持（脱敏 / tracker / 做种参数） ──────────────────────────
 
     private static async Task SensitiveUrlsUnitAsync()
