@@ -39,6 +39,7 @@ P2-1 Metalink4 · P2-2 限速档位 · P2-3 文件名模板 · P2-4 Mark-of-the-
 | 19 | P2-6 站点批量抓取（ISiteExtractor.ExtractDraftsAsync 默认接口方法；GenericPageSite 兜底每候选一草稿；内核 AddPageBatchAsync） | NetworkTests/SiteExtractors.cs 36a | 列表页 3 直链→3 草稿批量入队全完成，锚点/data:/mailto 跳过（已完 5a44249） |
 | 20 | P2-7 哈希展示比对（HashCompareService.Compute 三算法流式 + Verify 长度识别/清洗/两值展示；UI 接线不在本圈） | SetupTests 18 契约 | NIST "abc" 三算法向量；粘贴大小写/空白清洗匹配；不匹配两值都展示；无法识别 null（已完 7828d49） |
 | 21 | P2-8 过期链接刷新（NewDownloadRequest.SourcePage；403/410 → 从来源页 ExtractMediaAsync 重提直链换 URL 原地重试一次） | NetworkTests/SiteExtractors.cs 37a | 403 后自动刷新直链并完成、任务 URL 已换新链、日志记录刷新（已完） |
+| 22 | **内核选项收尾**（ExternalEngineCommand / EnableYtDlp / WhenAllComplete 进 Factory + 设置页入口） | SetupTests 23/24/25 三条映射契约 | Factory 三字段透传 + 字符串→enum 兜底；SettingsSheet 新组「站点提取与外部引擎」含 yt-dlp 开关/引擎命令模板；11 套件全绿（已完 3add289） |
 
 ## 明确不做
 
