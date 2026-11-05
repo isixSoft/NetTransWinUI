@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 端到端测试工程：net8.0 控制台，零 NuGet 依赖，
+       通过 RealDownloadKernel + 本地 TestServer 走完整的 添加→探测→传输→校验 流程。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>EndToEndTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>EndToEndTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TestKit/TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

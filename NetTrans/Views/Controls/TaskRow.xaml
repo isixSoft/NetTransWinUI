@@ -84,7 +84,7 @@
             <!-- .rt -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Border x:Name="DoneBadge" Style="{StaticResource BadgeStyle}" Visibility="Collapsed">
-                    <TextBlock Style="{StaticResource BadgeTextStyle}" Text="完成"/>
+                    <TextBlock x:Name="DoneBadgeText" Style="{StaticResource BadgeTextStyle}" Text="完成"/>
                 </Border>
                 <TextBlock
                     x:Name="TrailingText"
@@ -122,6 +122,7 @@
                         IconSize="17"
                         Foreground="White"/>
                     <TextBlock
+                        x:Name="ToggleLabel"
                         HorizontalAlignment="Center"
                         FontSize="12.5"
                         FontWeight="Medium"

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="xml:space" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="xml:space" type="xsd:string" use="preserve" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- 工具栏静态 tooltip（x:Uid） -->
+  <data name="ToolbarAdd.TooltipService.ToolTip" xml:space="preserve"><value>新建下载</value></data>
+  <data name="ToolbarOpenFolder.TooltipService.ToolTip" xml:space="preserve"><value>打开文件夹</value></data>
+  <data name="ToolbarSniff.TooltipService.ToolTip" xml:space="preserve"><value>视频嗅探</value></data>
+  <data name="ToolbarSettings.TooltipService.ToolTip" xml:space="preserve"><value>设置</value></data>
+
+  <!-- 动态 tooltip（ShellViewModel 经 L10n 取） -->
+  <data name="TooltipToggleAllStart" xml:space="preserve"><value>全部开始</value></data>
+  <data name="TooltipToggleAllPause" xml:space="preserve"><value>全部暂停</value></data>
+  <data name="TooltipRemove" xml:space="preserve"><value>删除</value></data>
+  <data name="TooltipRemoveCount" xml:space="preserve"><value>删除 {0} 项</value></data>
+  <data name="TooltipInspectorOpen" xml:space="preserve"><value>打开详情窗口</value></data>
+  <data name="TooltipInspectorClose" xml:space="preserve"><value>关闭详情窗口</value></data>
+
+  <!-- 设置页 -->
+  <data name="SettingsSheet.Title" xml:space="preserve"><value>设置</value></data>
+  <data name="SettingsSheet.RightLabel" xml:space="preserve"><value>完成</value></data>
+  <data name="SettingsGroupDownload.Text" xml:space="preserve"><value>下载</value></data>
+  <data name="SettingsGroupQueue.Text" xml:space="preserve"><value>队列与计划</value></data>
+  <data name="SettingsGroupBehavior.Text" xml:space="preserve"><value>行为</value></data>
+  <data name="SettingsRowSavePath.Label" xml:space="preserve"><value>默认位置</value></data>
+  <data name="SettingsRowFolders.Label" xml:space="preserve"><value>按分类分文件夹</value></data>
+  <data name="SettingsRowNameTemplate.Label" xml:space="preserve"><value>文件名模板</value></data>
+  <data name="SettingsNameTemplate.PlaceholderText" xml:space="preserve"><value>默认自动命名</value></data>
+  <data name="SettingsRowConcurrency.Label" xml:space="preserve"><value>同时下载</value></data>
+  <data name="SettingsRowGlobalLimit.Label" xml:space="preserve"><value>全局限速</value></data>
+  <data name="SettingsRowProfile.Label" xml:space="preserve"><value>限速档位</value></data>
+  <data name="SettingsRowNight.Label" xml:space="preserve"><value>夜间不限速</value></data>
+  <data name="SettingsRowSchedule.Label" xml:space="preserve"><value>计划时段</value></data>
+  <data name="SettingsRowRetry.Label" xml:space="preserve"><value>失败自动重试</value></data>
+  <data name="SettingsRowAfter.Label" xml:space="preserve"><value>全部完成后</value></data>
+  <data name="SettingsRowLanguage.Label" xml:space="preserve"><value>语言</value></data>
+  <data name="SettingsNoteLanguage.Text" xml:space="preserve"><value>语言切换将在下次启动后生效。</value></data>
+  <data name="SettingsRowClipboard.Label" xml:space="preserve"><value>监视剪贴板</value></data>
+  <data name="SettingsRowNotify.Label" xml:space="preserve"><value>完成后通知</value></data>
+  <data name="SettingsRowMotw.Label" xml:space="preserve"><value>完成时标记来源</value></data>
+  <data name="SettingsRowVerify.Label" xml:space="preserve"><value>完成后校验 SHA-256</value></data>
+  <data name="SettingsRowScan.Label" xml:space="preserve"><value>完成后病毒扫描</value></data>
+  <data name="SettingsRowEdge.Label" xml:space="preserve"><value>贴边隐藏</value></data>
+  <data name="SettingsRowIsland.Label" xml:space="preserve"><value>显示悬浮窗</value></data>
+  <data name="SettingsRowBossKey.Label" xml:space="preserve"><value>老板键</value></data>
+  <data name="SettingsNoteBossKey.Text" xml:space="preserve"><value>按下老板键后主窗口、悬浮窗、托盘图标全部消失，下载在后台继续。</value></data>
+  <data name="SettingsNotePortable.Text" xml:space="preserve"><value>便携模式：设置写入程序同目录，不写注册表、不关联协议、不驻留开机项。并发数优化需手动执行，会改动系统设置。</value></data>
+  <data name="SettingsOptimize.Content" xml:space="preserve"><value>执行并发数优化…</value></data>
+
+  <!-- 语言下拉显示名 + 运行时 toast -->
+  <data name="LangAuto" xml:space="preserve"><value>跟随系统</value></data>
+  <data name="LangEn" xml:space="preserve"><value>English</value></data>
+  <data name="LangZhCN" xml:space="preserve"><value>简体中文</value></data>
+  <data name="NotifyClipboardStarted" xml:space="preserve"><value>已开始监视剪贴板</value></data>
+  <data name="NotifyClipboardStopped" xml:space="preserve"><value>已停止监视剪贴板</value></data>
+  <data name="NotifyConcurrencyOpt" xml:space="preserve"><value>并发数优化会改动系统设置，已记录为待执行</value></data>
+
+  <!-- 站点提取与外部引擎（圈22） -->
+  <data name="SettingsGroupEngines.Text" xml:space="preserve"><value>站点提取与外部引擎</value></data>
+  <data name="SettingsRowYtDlp.Label" xml:space="preserve"><value>yt-dlp 兜底站点提取器</value></data>
+  <data name="SettingsRowEngineCmd.Label" xml:space="preserve"><value>BT / eD2k 外部引擎命令模板</value></data>
+  <data name="SettingsEngineCmd.PlaceholderText" xml:space="preserve"><value>留空即禁用外部引擎，示例：aria2c --select-file {files} -x 16 -s 16 -o '{path}' '{url}'</value></data>
+  <data name="SettingsNoteEngine.Text" xml:space="preserve"><value>占位符：{url}（任务 URL）、{path}（解析后的落盘路径）、{name}（任务名）、{files}（--select-file 索引列表，BT per-file 勾选时自动展开）。</value></data>
+</root>

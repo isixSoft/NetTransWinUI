@@ -2,7 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
-using NetTrans.Models;
+using NetTrans.Kernel;
 using NetTrans.Services;
 
 namespace NetTrans.ViewModels;
@@ -14,9 +14,10 @@ namespace NetTrans.ViewModels;
 /// </summary>
 public sealed partial class DownloadItemViewModel : ObservableObject
 {
-    public DownloadItem Model { get; }
+    /// <summary>The kernel task this row mirrors. Owned by the kernel; read-only here.</summary>
+    public DownloadTask Model { get; }
 
-    public DownloadItemViewModel(DownloadItem model)
+    public DownloadItemViewModel(DownloadTask model)
     {
         Model = model;
         _done = model.Done;
@@ -50,44 +51,12 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     [ObservableProperty] private string _speedLimit;
     [ObservableProperty] private bool _isSelected;
 
-    /// <summary>Set when the server holds a newer build; clearing it also drops the row's 新版本 tag.</summary>
-    public NewVersionInfo? NewerVersion
-    {
-        get => Model.NewerVersion;
-        set
-        {
-            if (Model.NewerVersion == value) return;
-            Model.NewerVersion = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasNewerVersion));
-            OnPropertyChanged(nameof(NewVersionSubtitle));
-        }
-    }
+    /// <summary>Set when the server holds a newer build; the kernel clears it on redownload.</summary>
+    public NewVersionInfo? NewerVersion => Model.NewerVersion;
 
-    public string? Checksum
-    {
-        get => Model.Checksum;
-        set
-        {
-            if (Model.Checksum == value) return;
-            Model.Checksum = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ChecksumText));
-            OnPropertyChanged(nameof(SubText));
-        }
-    }
+    public string? Checksum => Model.Checksum;
 
-    public string? ErrorMessage
-    {
-        get => Model.ErrorMessage;
-        set
-        {
-            if (Model.ErrorMessage == value) return;
-            Model.ErrorMessage = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SubText));
-        }
-    }
+    public string? ErrorMessage => Model.ErrorMessage;
 
     // ── derived: state ────────────────────────────────────────────────────
     public bool IsDone => Status == DownloadStatus.Completed;
@@ -197,13 +166,20 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         ? $"{n.Version} · {FormatHelpers.Bytes(n.Size)} · 发布于 {n.Published}"
         : "";
 
-    /// <summary>Called by the engine after it mutates the model, to refresh every derived readout at once.</summary>
+    /// <summary>Called by the task manager after the kernel mutates the task, to refresh every derived readout at once.</summary>
     public void Refresh()
     {
         Done = Model.Done;
         Speed = Model.Speed;
         Status = Model.Status;
         Connections = Model.Connections;
+        Priority = Model.Priority;
+        SpeedLimit = Model.SpeedLimit;
+
+        // the real kernel refines these after its probe
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Host));
+        OnPropertyChanged(nameof(Size));
 
         OnPropertyChanged(nameof(Blocks));
         OnPropertyChanged(nameof(ConnectionSpeeds));
@@ -211,6 +187,12 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         OnPropertyChanged(nameof(Log));
         OnPropertyChanged(nameof(AverageSpeedText));
         OnPropertyChanged(nameof(PeakSpeedText));
+        OnPropertyChanged(nameof(NewerVersion));
+        OnPropertyChanged(nameof(HasNewerVersion));
+        OnPropertyChanged(nameof(NewVersionSubtitle));
+        OnPropertyChanged(nameof(ChecksumText));
+        OnPropertyChanged(nameof(ErrorMessage));
+        OnPropertyChanged(nameof(SubText));
     }
 
     partial void OnDoneChanged(long value) => RaiseDerived();
@@ -234,13 +216,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         OnPropertyChanged(nameof(ToggleGlyph));
     }
 
-    partial void OnPriorityChanged(TaskPriority value)
-    {
-        Model.Priority = value;
-        OnPropertyChanged(nameof(IsHighPriority));
-    }
-
-    partial void OnSpeedLimitChanged(string value) => Model.SpeedLimit = value;
+    partial void OnPriorityChanged(TaskPriority value) => OnPropertyChanged(nameof(IsHighPriority));
 
     private void RaiseDerived()
     {

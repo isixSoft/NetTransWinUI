@@ -4,25 +4,33 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:NetTrans.Views.Controls">
 
+    <!-- SheetHost Title/RightLabel via x:Uid (DP auto-resolved).
+         LeftLabel stays empty (no cancel in this sheet). -->
     <controls:SheetHost
+        x:Uid="SettingsSheet"
         x:Name="Host"
-        Title="设置"
         LeftLabel=""
-        RightLabel="完成"
         Cancelled="OnClosed"
         Confirmed="OnClosed">
 
         <StackPanel>
-            <TextBlock Margin="4,0,4,6" Style="{StaticResource GroupHeaderTextStyle}" Text="下载"/>
+            <!-- ── 下载组 ── -->
+            <TextBlock x:Uid="SettingsGroupDownload" Margin="4,0,4,6" Style="{StaticResource GroupHeaderTextStyle}"/>
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <controls:FormRow x:Name="SavePathRow" Label="默认位置" ShowChevron="True" ShowSeparator="False"/>
+                    <controls:FormRow x:Uid="SettingsRowSavePath" x:Name="SavePathRow" ShowChevron="True" ShowSeparator="False"/>
 
-                    <controls:FormRow Label="按分类分文件夹">
+                    <controls:FormRow x:Uid="SettingsRowFolders">
                         <controls:IosSwitch x:Name="FoldersSwitch" Toggled="OnFoldersToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="同时下载">
+                    <controls:FormRow x:Uid="SettingsRowNameTemplate">
+                        <TextBox x:Uid="SettingsNameTemplate" x:Name="NameTemplateBox"
+                                 Width="200" Style="{StaticResource FormTextBoxStyle}"
+                                 TextChanged="OnNameTemplateChanged"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow x:Uid="SettingsRowConcurrency">
                         <ComboBox x:Name="ConcurrencyBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnConcurrencyChanged">
                             <x:String>1</x:String>
                             <x:String>3</x:String>
@@ -31,7 +39,7 @@
                         </ComboBox>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="全局限速">
+                    <controls:FormRow x:Uid="SettingsRowGlobalLimit">
                         <ComboBox x:Name="GlobalLimitBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnGlobalLimitChanged">
                             <x:String>不限</x:String>
                             <x:String>4 MB/s</x:String>
@@ -41,18 +49,24 @@
                         </ComboBox>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="夜间不限速">
+                    <controls:FormRow x:Uid="SettingsRowProfile">
+                        <!-- items come from SpeedProfileService.Profiles in code-behind -->
+                        <ComboBox x:Name="ProfileBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnProfileChanged"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow x:Uid="SettingsRowNight">
                         <controls:IosSwitch x:Name="NightSwitch" Toggled="OnNightToggled"/>
                     </controls:FormRow>
                 </StackPanel>
             </Border>
 
-            <TextBlock Margin="4,18,4,6" Style="{StaticResource GroupHeaderTextStyle}" Text="队列与计划"/>
+            <!-- ── 队列与计划 ── -->
+            <TextBlock x:Uid="SettingsGroupQueue" Margin="4,18,4,6" Style="{StaticResource GroupHeaderTextStyle}"/>
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <controls:FormRow x:Name="ScheduleRow" Label="计划时段" ShowChevron="True" ShowSeparator="False"/>
+                    <controls:FormRow x:Uid="SettingsRowSchedule" x:Name="ScheduleRow" ShowChevron="True" ShowSeparator="False"/>
 
-                    <controls:FormRow Label="失败自动重试">
+                    <controls:FormRow x:Uid="SettingsRowRetry">
                         <ComboBox x:Name="RetryBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnRetryChanged">
                             <x:String>不重试</x:String>
                             <x:String>3 次</x:String>
@@ -60,7 +74,7 @@
                         </ComboBox>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="全部完成后">
+                    <controls:FormRow x:Uid="SettingsRowAfter">
                         <ComboBox x:Name="AfterBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnAfterChanged">
                             <x:String>无操作</x:String>
                             <x:String>退出程序</x:String>
@@ -71,44 +85,69 @@
                 </StackPanel>
             </Border>
 
-            <TextBlock Margin="4,18,4,6" Style="{StaticResource GroupHeaderTextStyle}" Text="行为"/>
+            <!-- ── 站点提取与外部引擎 ── -->
+            <TextBlock x:Uid="SettingsGroupEngines" Margin="4,18,4,6" Style="{StaticResource GroupHeaderTextStyle}"/>
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <controls:FormRow Label="监视剪贴板" ShowSeparator="False">
+                    <controls:FormRow x:Uid="SettingsRowYtDlp">
+                        <controls:IosSwitch x:Name="YtDlpSwitch" Toggled="OnYtDlpToggled"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow x:Uid="SettingsRowEngineCmd">
+                        <TextBox x:Uid="SettingsEngineCmd" x:Name="EngineCmdBox"
+                                 Width="360" Style="{StaticResource FormTextBoxStyle}"
+                                 TextChanged="OnEngineCmdChanged"/>
+                    </controls:FormRow>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Uid="SettingsNoteEngine" Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"/>
+
+            <!-- ── 行为 ── -->
+            <TextBlock x:Uid="SettingsGroupBehavior" Margin="4,18,4,6" Style="{StaticResource GroupHeaderTextStyle}"/>
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <controls:FormRow x:Uid="SettingsRowClipboard" ShowSeparator="False">
                         <controls:IosSwitch x:Name="ClipboardSwitch" Toggled="OnClipboardToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="完成后通知">
+                    <controls:FormRow x:Uid="SettingsRowNotify">
                         <controls:IosSwitch x:Name="NotifySwitch" Toggled="OnNotifyToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="完成后校验 SHA-256">
+                    <controls:FormRow x:Uid="SettingsRowMotw">
+                        <controls:IosSwitch x:Name="MotwSwitch" Toggled="OnMotwToggled"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow x:Uid="SettingsRowVerify">
                         <controls:IosSwitch x:Name="VerifySwitch" Toggled="OnVerifyToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="完成后病毒扫描">
+                    <controls:FormRow x:Uid="SettingsRowScan">
                         <controls:IosSwitch x:Name="ScanSwitch" Toggled="OnScanToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="贴边隐藏">
+                    <controls:FormRow x:Uid="SettingsRowEdge">
                         <controls:IosSwitch x:Name="EdgeSwitch" Toggled="OnEdgeToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow Label="显示悬浮窗">
+                    <controls:FormRow x:Uid="SettingsRowIsland">
                         <controls:IosSwitch x:Name="IslandSwitch" Toggled="OnIslandToggled"/>
                     </controls:FormRow>
 
-                    <controls:FormRow x:Name="BossKeyRow" Label="老板键" ShowChevron="True"/>
+                    <controls:FormRow x:Uid="SettingsRowLanguage">
+                        <ComboBox x:Name="LanguageBox" Style="{StaticResource FormSelectStyle}" SelectionChanged="OnLanguageChanged"/>
+                    </controls:FormRow>
+
+                    <controls:FormRow x:Uid="SettingsRowBossKey" x:Name="BossKeyRow" ShowChevron="True"/>
                 </StackPanel>
             </Border>
 
-            <TextBlock Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"
-                       Text="按下老板键后主窗口、悬浮窗、托盘图标全部消失，下载在后台继续。"/>
-            <TextBlock Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"
-                       Text="便携模式：设置写入程序同目录，不写注册表、不关联协议、不驻留开机项。并发数优化需手动执行，会改动系统设置。"/>
+            <TextBlock x:Uid="SettingsNoteBossKey" Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"/>
+            <TextBlock x:Uid="SettingsNoteLanguage" Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"/>
+            <TextBlock x:Uid="SettingsNotePortable" Margin="4,6,4,0" Style="{StaticResource NoteTextStyle}"/>
 
-            <Button Margin="0,8,0,0" Style="{StaticResource BigPlainButtonStyle}"
-                    Content="执行并发数优化…" Click="OnOptimizeClick"/>
+            <Button x:Uid="SettingsOptimize" Margin="0,8,0,0" Style="{StaticResource BigPlainButtonStyle}"
+                    Click="OnOptimizeClick"/>
         </StackPanel>
     </controls:SheetHost>
 </UserControl>

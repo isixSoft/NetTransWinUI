@@ -187,7 +187,7 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <Button Grid.Column="0" Style="{StaticResource ToolButtonStyle}" ToolTipService.ToolTip="新建下载" Click="OnAddMenuClick" x:Name="ToolbarAddButton">
+            <Button x:Uid="ToolbarAdd" Grid.Column="0" Style="{StaticResource ToolButtonStyle}" Click="OnAddMenuClick" x:Name="ToolbarAddButton">
                 <controls:StrokeIcon Data="{StaticResource IconPlus}" IconSize="22" Thickness="2"/>
             </Button>
 
@@ -204,13 +204,13 @@
                 <controls:StrokeIcon Data="{StaticResource IconTrash}" IconSize="22"/>
             </Button>
 
-            <Button Grid.Column="6" Style="{StaticResource ToolButtonStyle}" ToolTipService.ToolTip="打开文件夹"
+            <Button x:Uid="ToolbarOpenFolder" Grid.Column="6" Style="{StaticResource ToolButtonStyle}"
                     IsEnabled="{x:Bind ViewModel.CanOpenFolder, Mode=OneWay}"
                     Command="{x:Bind ViewModel.OpenFolderCommand}">
                 <controls:StrokeIcon Data="{StaticResource IconFolder}" IconSize="22"/>
             </Button>
 
-            <Button Grid.Column="8" Style="{StaticResource ToolButtonStyle}" ToolTipService.ToolTip="视频嗅探"
+            <Button x:Uid="ToolbarSniff" Grid.Column="8" Style="{StaticResource ToolButtonStyle}"
                     Command="{x:Bind ViewModel.OpenSheetCommand}" CommandParameter="sniff">
                 <controls:StrokeIcon Data="{StaticResource IconFilm}" IconSize="22"/>
             </Button>
@@ -221,7 +221,7 @@
                 <controls:StrokeIcon Data="{StaticResource IconInfo}" IconSize="22"/>
             </prim:ToggleButton>
 
-            <Button Grid.Column="12" Style="{StaticResource ToolButtonStyle}" ToolTipService.ToolTip="设置"
+            <Button x:Uid="ToolbarSettings" Grid.Column="12" Style="{StaticResource ToolButtonStyle}"
                     Command="{x:Bind ViewModel.OpenSheetCommand}" CommandParameter="prefs">
                 <controls:StrokeIcon Data="{StaticResource IconGear}" IconSize="22"/>
             </Button>

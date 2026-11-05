@@ -1,7 +1,10 @@
+<!-- The handoff (mini-ios2.css) specifies a light palette only; pinning the
+     app to Light keeps the token set 1:1 with the prototype on any Windows theme. -->
 <Application
     x:Class="NetTrans.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Light">
 
     <Application.Resources>
         <ResourceDictionary>

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Settings-to-kernel mapping tests (KernelOptionsFactory) plus a
+       JsonSettingsStore round-trip: plain net8.0 console, zero NuGet deps.
+       The app-source files under test are pure logic, so they are linked in
+       (not copied) and the tests always run the real code. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>SetupTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SetupTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+  <!-- Pure app sources: the factory itself, its input model, and the store. -->
+  <ItemGroup>
+    <Compile Include="../../NetTrans/Services/KernelOptionsFactory.cs" Link="Linked/KernelOptionsFactory.cs" />
+    <Compile Include="../../NetTrans/Services/ISettingsStore.cs" Link="Linked/ISettingsStore.cs" />
+    <Compile Include="../../NetTrans/Services/JsonSettingsStore.cs" Link="Linked/JsonSettingsStore.cs" />
+    <Compile Include="../../NetTrans/Services/SpeedProfileService.cs" Link="Linked/SpeedProfileService.cs" />
+    <Compile Include="../../NetTrans/Services/HashCompareService.cs" Link="Linked/HashCompareService.cs" />
+    <Compile Include="../../NetTrans/Models/AppSettings.cs" Link="Linked/AppSettings.cs" />
+    <Compile Include="../../NetTrans/Models/SpeedProfile.cs" Link="Linked/SpeedProfile.cs" />
+  </ItemGroup>
+
+  <!-- P2-9 resw contract tests read the app's real Strings/.../Resources.resw.
+       Bake the test-project path into the assembly so the tests still find the
+       repo when the build uses an artifacts-path outside the repo tree. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepoRoot</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

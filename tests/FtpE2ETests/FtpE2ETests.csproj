@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- FTP / SOCKS5 端到端测试工程：net8.0 控制台，零 NuGet 依赖，
+       自建最小 FTP 服务器与最小 SOCKS5 中继代理，走 RealDownloadKernel
+       的两条「真传输」路径：ftp:// 全流程 与 socks5:// 多分段并发。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>FtpE2ETests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>FtpE2ETests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TestKit/TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

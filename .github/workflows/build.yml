@@ -30,3 +30,41 @@ jobs:
 
       - name: Build (${{ matrix.tfm }})
         run: dotnet build NetTrans/NetTrans.csproj -c Release -f ${{ matrix.tfm }} -r win-x64 --no-restore
+
+      # P2-9 verification: Strings/<lang>/Resources.resw must reach the build output
+      # packed into an application PRI, otherwise language switching has nothing to
+      # switch to. The XAML/C# build alone cannot prove this.
+      - name: Verify localized resources (P2-9)
+        shell: pwsh
+        run: |
+          $out = "NetTrans/bin/Release/${{ matrix.tfm }}/win-x64"
+          if (-not (Test-Path $out)) { throw "output folder not found: $out" }
+
+          $all = Get-ChildItem -Path $out -Filter *.pri -File
+          $all | ForEach-Object { Write-Host ("PRI found: {0} ({1} bytes)" -f $_.Name, $_.Length) }
+
+          # Unpackaged WinUI names the app PRI after the executable; packaged builds
+          # use resources.pri. Accept either, never the framework's own PRIs.
+          $pri = $all | Where-Object { $_.Name -ieq "resources.pri" -or $_.BaseName -ieq "NetTrans" } |
+                 Select-Object -First 1
+          if (-not $pri) { throw "no application PRI (resources.pri / NetTrans.pri) in $out - resw not packaged" }
+
+          $makepri = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makepri.exe -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -Last 1
+          if (-not $makepri) { Write-Warning "makepri.exe not found; skipping PRI content check"; exit 0 }
+
+          $dump = Join-Path $env:TEMP "pri-${{ matrix.tfm }}.xml"
+          & $makepri.FullName dump /if $pri.FullName /of $dump /dt detailed /o | Out-Host
+          if (-not (Test-Path $dump)) { throw "makepri dump produced no output" }
+
+          $xml = Get-Content $dump -Raw
+          $xml -split "`n" | Where-Object { $_ -match "Toolbar|SettingsRow|New download" } |
+            Select-Object -First 6 | ForEach-Object { Write-Host ("PRI line: " + $_.Trim()) }
+
+          foreach ($needle in @("ToolbarAdd", "New download", "zh-CN")) {
+            if ($xml.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+              $preview = (($xml -split "`n") | Select-Object -First 20) -join "`n"
+              throw "PRI dump missing '$needle'. Dump preview:`n$preview"
+            }
+          }
+          Write-Host "PRI contains the toolbar key, its en value, and zh-CN candidates"

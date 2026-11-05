@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- SOCKS5 RFC1929 authentication + proxy string parsing tests:
+       net8.0 console, zero NuGet dependencies, driving NetTrans.Kernel
+       through a ProjectReference. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ProxyTests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ProxyTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../NetTrans.Kernel/NetTrans.Kernel.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TestKit/TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

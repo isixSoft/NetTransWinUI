@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using NetTrans.Kernel;
 using NetTrans.Models;
 using NetTrans.Services;
 
@@ -24,7 +25,8 @@ public sealed partial class ShellViewModel : ObservableObject
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromMilliseconds(1700) };
     private readonly DispatcherTimer _bannerTimer = new() { Interval = TimeSpan.FromMilliseconds(3600) };
 
-    public IDownloadEngine Engine { get; }
+    /// <summary>The UI-side task manager -- the only seam to the download kernel (NetTrans.Kernel).</summary>
+    public TaskManager Manager { get; }
     public AppSettings Settings { get; }
     public ISettingsStore SettingsStore => _settingsStore;
 
@@ -34,9 +36,9 @@ public sealed partial class ShellViewModel : ObservableObject
     /// <summary>Selected task ids; the last one drives the inspector, matching the handoff's `sel`.</summary>
     public ObservableCollection<int> SelectedIds { get; } = new();
 
-    public ShellViewModel(IDownloadEngine engine, IClipboardWatcher clipboardWatcher, ISettingsStore settingsStore)
+    public ShellViewModel(TaskManager manager, IClipboardWatcher clipboardWatcher, ISettingsStore settingsStore)
     {
-        Engine = engine;
+        Manager = manager;
         _clipboardWatcher = clipboardWatcher;
         _settingsStore = settingsStore;
         Settings = settingsStore.Load();
@@ -48,18 +50,22 @@ public sealed partial class ShellViewModel : ObservableObject
         _showIsland = Settings.ShowIsland;
         _edgeHide = Settings.EdgeHide;
 
-        Engine.Tasks.CollectionChanged += OnTasksChanged;
-        Engine.Ticked += OnEngineTicked;
-        Engine.Completed += OnTaskCompleted;
+        Manager.Tasks.CollectionChanged += OnTasksChanged;
+        Manager.Ticked += OnManagerTicked;
+        Manager.Completed += OnTaskCompleted;
 
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); Toast = null; };
         _bannerTimer.Tick += (_, _) => { _bannerTimer.Stop(); Banner = null; };
 
-        if (Engine.Tasks.FirstOrDefault() is { } first) SelectedIds.Add(first.Id);
+        if (Manager.Tasks.FirstOrDefault() is { } first) SelectedIds.Add(first.Id);
         Rebuild();
 
         _clipboardWatcher.UrlDetected += OnClipboardUrlDetected;
         if (Settings.WatchClipboard) _clipboardWatcher.Start();
+
+        // 限速档位（P2-2）：恢复上次选择的非默认档位；「全速」交给
+        // KernelOptionsFactory 启动时映射的旧全局限速值。
+        new SpeedProfileService(Settings).Restore(Manager.SetGlobalSpeedLimit);
     }
 
     // ── list state ────────────────────────────────────────────────────────
@@ -92,7 +98,7 @@ public sealed partial class ShellViewModel : ObservableObject
     public int ActiveCount => Scoped().Count(t => !t.IsDone);
     public int DoneCount => Scoped().Count(t => t.IsDone);
     public int SelectionCount => SelectedIds.Count;
-    public bool IsRunning => Engine.IsRunning;
+    public bool IsRunning => Manager.IsRunning;
     public bool HasCategoryFilter => Category != "all";
     public string CategoryLabel => CategoryName(Category);
 
@@ -101,7 +107,7 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         get
         {
-            var (value, unit) = FormatHelpers.SpeedParts(Engine.TotalSpeed);
+            var (value, unit) = FormatHelpers.SpeedParts(Manager.TotalSpeed);
             string detail = $"· {ActiveCount} 项 · {value} {unit}";
             return SelectionCount > 1 ? $"{detail} · 已选 {SelectionCount}" : detail;
         }
@@ -111,21 +117,22 @@ public sealed partial class ShellViewModel : ObservableObject
     public string TabActiveLabel => $"进行中 {ActiveCount}";
     public string TabDoneLabel => $"已完成 {DoneCount}";
     public string FoldLabel => IsListExpanded ? "收起" : $"展开更多 {HiddenCount} 项";
-    public string ToggleAllTooltip => IsRunning ? "全部暂停" : "全部开始";
-    public string RemoveTooltip => SelectionCount > 1 ? $"删除 {SelectionCount} 项" : "删除";
-    public string InspectorTooltip => ShowInspector ? "关闭详情窗口" : "打开详情窗口";
+    // P2-9 多语言：动态 tooltip 走 L10n
+    public string ToggleAllTooltip => IsRunning ? L10n.Get("TooltipToggleAllPause") : L10n.Get("TooltipToggleAllStart");
+    public string RemoveTooltip => SelectionCount > 1 ? L10n.Get("TooltipRemoveCount", SelectionCount) : L10n.Get("TooltipRemove");
+    public string InspectorTooltip => ShowInspector ? L10n.Get("TooltipInspectorClose") : L10n.Get("TooltipInspectorOpen");
     public bool CanRemove => SelectionCount > 0;
     public bool CanOpenFolder => Current is not null;
 
     // ── island ────────────────────────────────────────────────────────────
-    public IReadOnlyList<double> SpeedHistory => Engine.SpeedHistory;
-    public string TotalSpeedValue => FormatHelpers.SpeedParts(Engine.TotalSpeed).Value;
-    public string TotalSpeedUnit => FormatHelpers.SpeedParts(Engine.TotalSpeed).Unit;
+    public IReadOnlyList<double> SpeedHistory => Manager.SpeedHistory;
+    public string TotalSpeedValue => FormatHelpers.SpeedParts(Manager.TotalSpeed).Value;
+    public string TotalSpeedUnit => FormatHelpers.SpeedParts(Manager.TotalSpeed).Unit;
     public string IslandSubtitle
     {
         get
         {
-            string up = FormatHelpers.Speed(Engine.UploadSpeed);
+            string up = FormatHelpers.Speed(Manager.UploadSpeed);
             if (up.Length == 0) up = "0 KB/s";
             return $"↑ {up} · 平均 {FormatHelpers.SpeedOrDash(Average())}";
         }
@@ -136,8 +143,8 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         get
         {
-            long size = Engine.Tasks.Sum(t => t.Size);
-            long done = Engine.Tasks.Sum(t => t.Done);
+            long size = Manager.Tasks.Sum(t => t.Size);
+            long done = Manager.Tasks.Sum(t => t.Done);
             return size <= 0 ? 0 : Math.Clamp(done / (double)size, 0, 1);
         }
     }
@@ -193,7 +200,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private void ToggleTask(DownloadItemViewModel? item)
     {
         if (item is null) return;
-        Engine.Toggle(item.Id);
+        Manager.Toggle(item.Id);
         RaiseShellState();
     }
 
@@ -201,7 +208,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private void RemoveTask(DownloadItemViewModel? item)
     {
         if (item is null) return;
-        Engine.Remove(new[] { item.Id });
+        Manager.Remove(new[] { item.Id });
         SelectedIds.Clear();
         SyncSelection();
     }
@@ -210,7 +217,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private void RemoveSelected()
     {
         if (SelectedIds.Count == 0) return;
-        Engine.Remove(SelectedIds.ToList());
+        Manager.Remove(SelectedIds.ToList());
         SelectedIds.Clear();
         SyncSelection();
     }
@@ -218,27 +225,27 @@ public sealed partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void ToggleAll()
     {
-        Engine.ToggleAll();
+        Manager.ToggleAll();
         RaiseShellState();
     }
 
     [RelayCommand]
     private void MoveToFront(DownloadItemViewModel? item)
     {
-        if (item is not null) Engine.MoveToFront(item.Id);
+        if (item is not null) Manager.MoveToFront(item.Id);
     }
 
     [RelayCommand]
     private void MoveToBack(DownloadItemViewModel? item)
     {
-        if (item is not null) Engine.MoveToBack(item.Id);
+        if (item is not null) Manager.MoveToBack(item.Id);
     }
 
     [RelayCommand]
     private void Redownload(DownloadItemViewModel? item)
     {
         if (item is null) return;
-        Engine.Redownload(item.Id);
+        Manager.Redownload(item.Id);
         Say("已按新版本重新下载");
     }
 
@@ -270,7 +277,7 @@ public sealed partial class ShellViewModel : ObservableObject
     /// <summary>Adds a task from the 新建下载 sheet and reports it in the toast lane.</summary>
     public DownloadItemViewModel AddDownload(NewDownloadRequest request)
     {
-        var task = Engine.Add(request);
+        var task = Manager.Add(request);
         Select(task.Id, additive: false);
         Say("已添加 1 个任务");
         return task;
@@ -286,7 +293,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
     // ── plumbing ──────────────────────────────────────────────────────────
     private IEnumerable<DownloadItemViewModel> Scoped() =>
-        Engine.Tasks.Where(t => Category == "all" || t.Category == Category);
+        Manager.Tasks.Where(t => Category == "all" || t.Category == Category);
 
     private void Rebuild()
     {
@@ -343,7 +350,7 @@ public sealed partial class ShellViewModel : ObservableObject
             "size" => searched.OrderBy(t => t.Size),
             "progress" => searched.OrderBy(t => t.Fraction),
             "speed" => searched.OrderBy(t => t.Speed),
-            _ => searched.OrderBy(t => Engine.Tasks.IndexOf(t)),
+            _ => searched.OrderBy(t => Manager.Tasks.IndexOf(t)),
         };
 
         return SortDirection == "desc" ? sorted.Reverse() : sorted;
@@ -351,10 +358,10 @@ public sealed partial class ShellViewModel : ObservableObject
 
     private void SyncSelection()
     {
-        foreach (var task in Engine.Tasks) task.IsSelected = SelectedIds.Contains(task.Id);
+        foreach (var task in Manager.Tasks) task.IsSelected = SelectedIds.Contains(task.Id);
 
         int last = SelectedIds.Count > 0 ? SelectedIds[^1] : -1;
-        Current = Engine.Tasks.FirstOrDefault(t => t.Id == last);
+        Current = Manager.Tasks.FirstOrDefault(t => t.Id == last);
 
         OnPropertyChanged(nameof(SelectionCount));
         OnPropertyChanged(nameof(RemoveTooltip));
@@ -365,7 +372,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
     private void OnTasksChanged(object? sender, NotifyCollectionChangedEventArgs e) => Rebuild();
 
-    private void OnEngineTicked(object? sender, EventArgs e)
+    private void OnManagerTicked(object? sender, EventArgs e)
     {
         // Progress- and speed-ordered views reshuffle as the numbers move; the
         // other keys are stable, so only those two need a rebuild per tick.
@@ -389,7 +396,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
     private double Average()
     {
-        var history = Engine.SpeedHistory;
+        var history = Manager.SpeedHistory;
         return history.Count == 0 ? 0 : history.Average();
     }
 

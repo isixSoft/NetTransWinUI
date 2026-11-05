@@ -29,7 +29,10 @@ public sealed partial class TaskRow : UserControl
     public event EventHandler<(DownloadItemViewModel Item, bool Additive)>? RowInvoked;
     public event EventHandler<DownloadItemViewModel>? ToggleRequested;
     public event EventHandler<DownloadItemViewModel>? RemoveRequested;
-    public event EventHandler<RowContextRequest>? ContextRequested;
+    /// <summary>Named RowContextRequested, not ContextRequested: the latter
+    /// hides UIElement.ContextRequested (CS0108) and would shadow the built-in
+    /// routed event.</summary>
+    public event EventHandler<RowContextRequest>? RowContextRequested;
 
     private DownloadItemViewModel? _item;
     private bool _isPointerOver;
@@ -147,8 +150,13 @@ public sealed partial class TaskRow : UserControl
 
         ToggleButton.Width = dense ? 46 : 64;
         ToggleGlyph.IconSize = dense ? 13 : 17;
+        ToggleLabel.FontSize = dense ? 11 : 12.5;
         RemoveGlyph.IconSize = dense ? 13 : 17;
         RemoveLabel.FontSize = dense ? 11 : 12.5;
+
+        // `.card.dense .badge`: the 完成 badge shrinks with the row.
+        DoneBadge.Padding = dense ? new Thickness(6, 1, 6, 1) : new Thickness(7, 2, 7, 2);
+        DoneBadgeText.FontSize = dense ? 10 : 11;
 
         ApplySeparator();
         ApplyProgress(animate: false);
@@ -199,7 +207,7 @@ public sealed partial class TaskRow : UserControl
     {
         if (Item is null) return;
         RowInvoked?.Invoke(this, (Item, false));
-        ContextRequested?.Invoke(this, new RowContextRequest(Item, e.GetPosition(null)));
+        RowContextRequested?.Invoke(this, new RowContextRequest(Item, e.GetPosition(null)));
         e.Handled = true;
     }
 

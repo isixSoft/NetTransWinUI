@@ -58,6 +58,7 @@ public sealed partial class MainShell : UserControl
             Bindings.Update();
             SyncTabs();
             SyncToggleAllGlyph();
+            SyncViewMenuAct();
         }
     }
 
@@ -147,7 +148,7 @@ public sealed partial class MainShell : UserControl
         row.RowInvoked += (_, e) => ViewModel?.Select(e.Item.Id, e.Additive);
         row.ToggleRequested += (_, item) => ViewModel?.ToggleTaskCommand.Execute(item);
         row.RemoveRequested += (_, item) => ViewModel?.RemoveTaskCommand.Execute(item);
-        row.ContextRequested += (_, request) => ShowContextMenu(request);
+        row.RowContextRequested += (_, request) => ShowContextMenu(request);
     }
 
     private void RefreshRowDensity()
@@ -300,7 +301,7 @@ public sealed partial class MainShell : UserControl
             Math.Min(request.Position.X, ActualWidth - 244),
             Math.Min(request.Position.Y, ActualHeight - 380));
 
-        ShowPopover(items, position, width: 244);
+        ShowPopover(items, position, width: 232);
     }
 
     private void CopyLink(DownloadItemViewModel item)
@@ -407,6 +408,10 @@ public sealed partial class MainShell : UserControl
                 SyncToggleAllGlyph();
                 break;
 
+            case nameof(ShellViewModel.HasCategoryFilter):
+                SyncViewMenuAct();
+                break;
+
             case nameof(ShellViewModel.DenseRows):
                 RefreshRowDensity();
                 break;
@@ -438,6 +443,11 @@ public sealed partial class MainShell : UserControl
 
     private void SyncToggleAllGlyph() =>
         ToggleAllGlyph.Data = Glyph(ViewModel?.IsRunning == true ? "IconPauseFill" : "IconPlayFill");
+
+    /// <summary>`nav__b.act`: the 显示与排序 button goes white-on-blue while a category filter is on.</summary>
+    private void SyncViewMenuAct() =>
+        ViewMenuButton.Style = (Style)Application.Current.Resources[
+            ViewModel?.HasCategoryFilter == true ? "NavButtonActiveStyle" : "NavButtonStyle"];
 
     private void SyncToast()
     {
