@@ -23,6 +23,7 @@ public static class ProtocolDetector
         if (extension is ".m3u8" or ".m3u") return DownloadProtocol.Hls;
         if (extension == ".mpd") return DownloadProtocol.Dash;
         if (extension == ".torrent") return DownloadProtocol.BitTorrent;
+        if (extension is ".meta4" or ".metalink") return DownloadProtocol.Metalink;
 
         if (trimmed.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase) ||
             trimmed.StartsWith("ftps://", StringComparison.OrdinalIgnoreCase)) return DownloadProtocol.Ftp;

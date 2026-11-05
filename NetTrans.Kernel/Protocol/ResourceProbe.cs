@@ -18,6 +18,8 @@ namespace NetTrans.Kernel.Protocol;
 /// 压过默认与任务级同名字头——站点最懂自己的 CDN（与 yt-dlp 同策略）。</param>
 /// <param name="Subtitles">外置字幕轨（HLS EXT-X-MEDIA / DASH text AdaptationSet），
 /// 绝对 URL，可作为普通任务下载；无字幕轨为 null。</param>
+/// <param name="ExpectedHash">探测到的期望指纹（Metalink4 内嵌 hash）；裸十六进制，
+/// 算法按长度判别，Kernel.ApplyProbe 会写入 task.ExpectedHash（任务显式输入优先）。null = 未知。</param>
 public sealed record ResourceProbe(
     string Name,
     long Size,
@@ -29,4 +31,5 @@ public sealed record ResourceProbe(
     DownloadProtocol? SuggestedProtocol = null,
     IReadOnlyList<string>? Trackers = null,
     IReadOnlyDictionary<string, string>? ExtraHeaders = null,
-    IReadOnlyList<SubtitleTrack>? Subtitles = null);
+    IReadOnlyList<SubtitleTrack>? Subtitles = null,
+    string? ExpectedHash = null);

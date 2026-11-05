@@ -27,6 +27,7 @@ public sealed class ProtocolDriverRegistry
         Register(new DashDriver());
         Register(new BitTorrentDriver());
         Register(new Ed2kDriver());
+        Register(new MetalinkDriver());
 
         _sites.Register(new BilibiliSite());
         _sites.Register(new TwitterSite());

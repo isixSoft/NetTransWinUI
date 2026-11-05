@@ -281,6 +281,11 @@ public sealed partial class RealDownloadKernel
                 task.Trackers = probe.Trackers;
                 changed = true;
             }
+            if (task.ExpectedHash is null && probe.ExpectedHash is { Length: > 0 } hash)
+            {
+                task.ExpectedHash = hash;
+                changed = true;
+            }
             if (task.Connections == 0)
             {
                 task.Connections = _options.ConnectionsPerTask;

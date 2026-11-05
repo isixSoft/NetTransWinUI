@@ -104,6 +104,8 @@ internal sealed partial class Program : TestKit
         await RunAsync("29b. 批量导入：空行/注释/空白跳过 + 空文本 0 任务", () => BatchImportEdgesAsync(server));
         await RunAsync("30a. 通用页面兜底：pdf 直链+m3u8 两类候选 + 非放弃路径", () => GenericPageExtractAsync(server));
         await RunAsync("30b. 通用页面兜底：内核级最优流可传输", () => GenericPageKernelAsync(server));
+        await RunAsync("31a. Metalink4：priority 主源/镜像/size/hash 解析", () => MetalinkParseAsync(server));
+        await RunAsync("31b. Metalink4：全链路下载 + 内嵌哈希校验 + 坏镜像剔除", () => MetalinkDownloadAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

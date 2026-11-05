@@ -359,4 +359,69 @@ internal sealed partial class Program
         }
     }
 
+    // ── 31. Metalink4（P2-1：file/size/hash/url，镜像探测期验尺寸） ────────
+
+    private const string MetalinkHash = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233";
+
+    private static async Task MetalinkParseAsync(TestServer server)
+    {
+        var meta4 = $$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <metalink xmlns="urn:ietf:params:xml:ns:metalink">
+              <file name="release.iso">
+                <size>262144</size>
+                <hash type="sha-256">{{MetalinkHash}}</hash>
+                <url priority="2">{{server.Base}}ml/mirror2.iso</url>
+                <url priority="1">{{server.Base}}ml/primary.iso</url>
+              </file>
+            </metalink>
+            """;
+        server.Map("ml/release.meta4", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(meta4), "application/metalink4+xml"));
+        // 镜像必须真实可核验（探测期 Range 0-0 验尺寸）
+        server.Map("ml/mirror2.iso", server.RangeFile(Payload(262144)));
+
+        var probe = await Registry.ProbeAsync(server.Base + "ml/release.meta4", null, null, default);
+        var plan = AssertPlan<TransferPlan.ByteRanges>(probe, "metalink 应产出 ByteRanges 计划");
+        Equal($"{server.Base}ml/primary.iso", plan.Url, "priority=1 应胜出为主源（与文档顺序无关）");
+        Equal(1, plan.Mirrors.Count, "其余 url 应成为镜像");
+        Equal($"{server.Base}ml/mirror2.iso", plan.Mirrors[0], "镜像 URL 应解析为绝对地址");
+        Equal(262144L, plan.Size, "size 元素应成为计划大小");
+        That(plan.AcceptRanges, "ByteRanges 计划应允许字节范围");
+        Equal("release.iso", probe.Name, "任务名取 file/@name");
+        Equal(MetalinkHash, probe.ExpectedHash, "内嵌 sha-256 应作为期望指纹");
+    }
+
+    private static async Task MetalinkDownloadAsync(TestServer server)
+    {
+        var data = Payload(64 * 1024);
+        var hex = Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+        server.Map("ml2/primary.iso", server.RangeFile(data));
+        // 尺寸不符的镜像：探测期必须剔除，不得参与下载
+        server.Map("ml2/mirror2.iso", server.RangeFile(Payload(1024)));
+
+        var meta4 = $$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <metalink xmlns="urn:ietf:params:xml:ns:metalink">
+              <file name="release.iso">
+                <size>{{data.Length}}</size>
+                <hash type="sha-256">{{hex}}</hash>
+                <url priority="2">{{server.Base}}ml2/mirror2.iso</url>
+                <url priority="1">{{server.Base}}ml2/primary.iso</url>
+              </file>
+            </metalink>
+            """;
+        server.Map("ml2/release.meta4", ctx => TestServer.Reply(ctx.Response, 200, Encoding.UTF8.GetBytes(meta4), "application/metalink4+xml"));
+
+        var probe = await Registry.ProbeAsync(server.Base + "ml2/release.meta4", null, null, default);
+        var plan = AssertPlan<TransferPlan.ByteRanges>(probe, "metalink 应产出 ByteRanges 计划");
+        That(plan.Mirrors.Count == 0, $"尺寸不符的镜像应被探测期剔除（实际 {plan.Mirrors.Count} 个）");
+
+        using var kernel = new RealDownloadKernel(new KernelOptions { ConnectionsPerTask = 2, MaxSimultaneous = 1 });
+        var task = kernel.Add(new NewDownloadRequest(server.Base + "ml2/release.meta4", TempDir(), "", 2,
+            TaskPriority.Normal, StartNow: true));
+        await WaitAsync(() => task.Status == DownloadStatus.Completed, "metalink 任务应完成", 30_000);
+        Equal("release.iso", task.Name, "任务名应来自 metalink file/@name");
+        Equal("SHA-256 已校验", task.Checksum, "内嵌哈希应作为期望指纹校验通过");
+    }
+
 }

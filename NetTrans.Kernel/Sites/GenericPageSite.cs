@@ -18,7 +18,7 @@ public sealed class GenericPageSite : ISiteExtractor
     // 协议驱动已直接处理的资源 + 常见直链文件：这些 URL 不当作页面认领
     private static readonly HashSet<string> FileExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".m3u8", ".mpd", ".torrent",
+        ".m3u8", ".mpd", ".torrent", ".meta4", ".metalink",
         ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
         ".exe", ".msi", ".dmg", ".pkg", ".iso", ".apk",
         ".mp4", ".mkv", ".avi", ".mov", ".webm",
