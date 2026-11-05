@@ -86,6 +86,9 @@ internal sealed partial class Program : TestKit
         await RunAsync("23a. 队列调度：到点批量开始/并发槽语义/队列外不受影响", () => QueueScheduleStartAsync(server));
         await RunAsync("23b. 队列调度：跨午夜窗口边界（22:59/23:00/06:59/07:00）", () => QueueScheduleMidnightAsync(server));
         await RunAsync("23c. 队列调度：仅停止时间窗口 + 非法 HH:mm 拒绝", () => QueueScheduleStopOnlyAsync(server));
+        await RunAsync("24a. 控制API：POST/GET/DELETE 任务 + 404", () => ControlApiBasicsAsync(server));
+        await RunAsync("24b. 控制API：仅环回放行 + 非环回 403", () => ControlApiTrustAsync(server));
+        await RunAsync("24c. 控制API：端口回退 + pause/resume/409", () => ControlApiPortAndToggleAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));

@@ -141,6 +141,25 @@ internal sealed partial class Program
         throw new Exception($"{what}：未抛出 {typeof(TException).Name}");
     }
 
+    /// <summary>任务日志由内核线程并发追加，直接枚举可能撞上
+    /// InvalidOperationException——带重试地查找，100×20ms 内找不到即失败。</summary>
+    private static bool LogContains(DownloadTask task, string needle)
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            try
+            {
+                if (task.Log.Any(l => l.Message.Contains(needle))) return true;
+            }
+            catch (InvalidOperationException)
+            {
+                // 正在被内核线程追加，稍后重试
+            }
+            Thread.Sleep(20);
+        }
+        return false;
+    }
+
     // ── 16. 单元扩容：SegmentTable / checkpoint / ChunkedFileWriter ───────
 
     private static Task SegmentSplitUnitAsync()

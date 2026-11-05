@@ -334,7 +334,7 @@ internal sealed partial class Program
         Equal(AfterCompletion.RunCommand, completed.Action, "RunCommand 动作应原样触发");
         That(completed.Command == $"{c1.Name} <- {completed.SavePath}",
             $"RunCommand 模板应展开 {{name}}/{{path}}：{completed.Command}");
-        That(c1.Log.Any(l => l.Message.Contains("完成后动作执行失败")), "runner 异常应记入任务日志");
+        That(LogContains(c1, "完成后动作执行失败"), "runner 异常应记入任务日志");
 
         // 内核仍可用：第二个任务（无动作）正常完成，且不再触发
         var c2 = kernel.Add(new NewDownloadRequest(server.Base + "done/c2.zip", dir, "", 2, TaskPriority.Normal, StartNow: true));
@@ -372,7 +372,7 @@ internal sealed partial class Program
             "A 内任务应批量进入运行态", 30_000);
         Equal(DownloadStatus.Queued, a3.Status, "第三个任务按并发槽排队（语义不变）");
         Equal(DownloadStatus.Paused, outside.Status, "队列外任务不受调度影响");
-        That(a1.Log.Any(l => l.Message.Contains("批量开始")), "应有批量开始日志");
+        That(LogContains(a1, "批量开始"), "应有批量开始日志");
     }
 
     private static async Task QueueScheduleMidnightAsync(TestServer server)
@@ -413,7 +413,7 @@ internal sealed partial class Program
         clock = new DateTime(2026, 11, 6, 7, 0, 0);
         kernel.EvaluateQueueSchedules();
         Equal(DownloadStatus.Paused, a1.Status, "07:00 出窗应批量暂停");
-        That(a1.Log.Any(l => l.Message.Contains("批量暂停")), "应有批量暂停日志");
+        That(LogContains(a1, "批量暂停"), "应有批量暂停日志");
         Equal(DownloadStatus.Downloading, outside.Status, "队列外下载中的任务不受停止窗口影响");
 
         gateA.Set();
