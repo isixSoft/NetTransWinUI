@@ -261,4 +261,140 @@ internal sealed partial class Program
             () => new YouTubeSite().ExtractAsync("https://www.youtube.com/watch?v=ciphered000", context, CancellationToken.None),
             "仅加密格式应报「解签」错误");
     }
+
+    // ── 21. yt-dlp 兜底提取器（外部解析引擎：-J dump-json → SiteMedia） ──
+
+    /// <summary>yt-dlp --dump-single-json 的 fixture：覆盖渐进式/video-only/纯音频/storyboard/无 url 格式与多语言字幕。</summary>
+    private static string YtDlpFixture(string baseUrl) => $$"""
+        {
+          "id": "fixture123",
+          "title": "yt-dlp 测试标题",
+          "_type": "video",
+          "webpage_url": "https://video.example/watch/abc",
+          "formats": [
+            { "format_id": "sb0", "ext": "mhtml", "vcodec": "none", "acodec": "none", "format_note": "storyboard", "url": "https://sb.example/0.jpg" },
+            { "format_id": "248", "ext": "mp4", "height": 1080, "vcodec": "avc1.640028", "acodec": "none", "format_note": "1080p video-only", "url": "https://vonly.example/248.mp4" },
+            { "format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "filesize": 5200000, "url": "https://audio.example/140.m4a" },
+            { "format_id": "137", "ext": "mp4", "height": 1080, "vcodec": "avc1.640028", "acodec": "mp4a.40.2", "filesize_approx": 250000000, "url": "{{baseUrl}}ytd/best.mp4", "http_headers": { "Referer": "https://video.example/", "User-Agent": "Mozilla/5.0 fixture" } },
+            { "format_id": "22", "ext": "mp4", "height": 720, "vcodec": "avc1.64001F", "acodec": "mp4a.40.2", "filesize": 100000000, "url": "https://cdn.example/22.mp4" },
+            { "format_id": "nourl", "ext": "mp4", "height": 2160, "vcodec": "avc1", "acodec": "mp4a" }
+          ],
+          "subtitles": {
+            "zh-Hans": [ { "ext": "vtt", "url": "https://subs.example/zh.vtt" } ],
+            "en": [ { "ext": "srt", "url": "https://subs.example/en.srt" }, { "ext": "vtt", "url": "https://subs.example/en.vtt" } ]
+          }
+        }
+        """;
+
+    private static async Task YtDlpMappingUnitAsync()
+    {
+        var context = new DriverContext
+        {
+            Options = new KernelOptions(),
+            Http = new HttpClient(),
+            Headers = new Dictionary<string, string>(),
+        };
+        var site = new YtDlpSite((_, _) => Task.FromResult<string?>(YtDlpFixture("https://fixture.example/")));
+
+        // 映射：formats → Streams（排序/标签/大小/流头）+ 字幕条目
+        var media = await site.ExtractAsync("https://video.example/watch/abc", context, CancellationToken.None);
+        Equal("yt-dlp 测试标题", media!.Title, "标题应取自 dump-json 的 title");
+        Equal(5, media.Streams.Count, "应为 2 渐进式 + 1 纯音频 + 2 字幕（video-only/storyboard/无 url 被排除）");
+        Equal("https://fixture.example/ytd/best.mp4", media.Streams[0].Url, "1080p 渐进式应排最前（height 降序）");
+        Equal("1080p mp4", media.Streams[0].Label, "画质标签 = height + ext");
+        Equal(250000000L, media.Streams[0].Size, "filesize_approx 应映射为声明大小");
+        Equal("720p mp4", media.Streams[1].Label, "第二应为 720p 渐进式");
+        Equal("音频 m4a", media.Streams[2].Label, "纯音频排在视频后（height 为空靠后）");
+        Equal(5200000L, media.Streams[2].Size, "纯音频的 filesize 应映射");
+        Equal("字幕 zh-Hans (vtt)", media.Streams[3].Label, "字幕流按语言标注");
+        Equal("字幕 en (srt)", media.Streams[4].Label, "每语言取第一条字幕（srt 在前）");
+        That(media.Streams[0].Headers!["Referer"] == "https://video.example/", "http_headers 的 Referer 应映射为流头");
+        That(media.Streams[0].Headers!["User-Agent"] == "Mozilla/5.0 fixture", "http_headers 的 UA 应映射为流头");
+        That(media.Streams[3].Headers is null, "字幕流不需要 CDN 头");
+
+        // CanHandle：兜底认领一切 http(s)，拒绝 ftp/magnet/裸串
+        That(site.CanHandle("https://any.example/page"), "https 应认领");
+        That(site.CanHandle("http://any.example/page"), "http 应认领");
+        That(!site.CanHandle("ftp://host/file.zip"), "ftp 不认领");
+        That(!site.CanHandle("magnet:?xt=urn:btih:abc"), "magnet 不认领");
+        That(!site.CanHandle("not a url"), "裸串不认领");
+
+        // 二进制缺失（runner 返回 null）→ 放弃认领，框架回退协议探测
+        var missing = await new YtDlpSite((_, _) => Task.FromResult<string?>(null))
+            .ExtractAsync("https://video.example/watch/abc", context, CancellationToken.None);
+        That(missing is null, "yt-dlp 不可用应返回 null（诚实降级）");
+    }
+
+    private static async Task YtDlpRegistryAsync(TestServer server)
+    {
+        var best = Payload(96 * 1024);
+        server.Map("ytd/best.mp4", server.RangeFile(best, contentType: "video/mp4"));
+        server.Map("ytd/page.html", server.RangeFile(Encoding.UTF8.GetBytes("<html>page</html>"), contentType: "text/html"));
+
+        // 启用：runner 注入 fixture → 兜底命中 → 最优渐进式流 + 标题命名 + 站点头
+        var registry = new ProtocolDriverRegistry(new KernelOptions
+        {
+            EnableYtDlp = true,
+            YtDlpRunner = (_, _) => Task.FromResult<string?>(YtDlpFixture(server.Base)),
+        }, ProbeHttp);
+
+        var hit = await registry.ProbeAsync("https://video.example/watch/abc", null, null, CancellationToken.None);
+        var hitPlan = AssertPlan<TransferPlan.ByteRanges>(hit, "yt-dlp 命中应产出 ByteRanges 计划");
+        Equal(server.Base + "ytd/best.mp4", hitPlan.Url, "应选 1080p 渐进式直链");
+        Equal("yt-dlp 测试标题.mp4", hit.Name, "任务名 = 页面标题 + 直链扩展名");
+        That(hit.ExtraHeaders is not null && hit.ExtraHeaders["Referer"] == "https://video.example/",
+            "探针应携带 http_headers 映射的 Referer（传输时随 GET 发送，该机制由 20b 内核级验证）");
+
+        // 未启用（默认）：兜底不注册，runner 不被调用，直接协议探测
+        bool runnerCalled = false;
+        var offRegistry = new ProtocolDriverRegistry(new KernelOptions
+        {
+            YtDlpRunner = (_, _) => { runnerCalled = true; return Task.FromResult<string?>(YtDlpFixture(server.Base)); },
+        }, ProbeHttp);
+        var off = await offRegistry.ProbeAsync(server.Base + "ytd/page.html", null, null, CancellationToken.None);
+        AssertPlan<TransferPlan.ByteRanges>(off, "未启用 yt-dlp 应直接协议探测");
+        That(!runnerCalled, "EnableYtDlp=false 时 runner 不应被调用");
+
+        // 二进制缺失：runner 返回 null → 回退协议探测原 URL，不抛未处理异常
+        var missingRegistry = new ProtocolDriverRegistry(new KernelOptions
+        {
+            EnableYtDlp = true,
+            YtDlpRunner = (_, _) => Task.FromResult<string?>(null),
+        }, ProbeHttp);
+        var fell = await missingRegistry.ProbeAsync(server.Base + "ytd/page.html", null, null, CancellationToken.None);
+        var fellPlan = AssertPlan<TransferPlan.ByteRanges>(fell, "yt-dlp 缺失应回退协议探测");
+        Equal(server.Base + "ytd/page.html", fellPlan.Url, "回退计划应指向原始 URL");
+    }
+
+    private static async Task YtDlpBadOutputAsync(TestServer server)
+    {
+        server.Map("ytd2/page.html", server.RangeFile(Encoding.UTF8.GetBytes("<html>page</html>"), contentType: "text/html"));
+        var context = new DriverContext
+        {
+            Options = new KernelOptions(),
+            Http = new HttpClient(),
+            Headers = new Dictionary<string, string>(),
+        };
+
+        // 坏 JSON：抛 FormatException（框架记日志后回退）
+        var badSite = new YtDlpSite((_, _) => Task.FromResult<string?>("<html>not json</html>"));
+        await AssertThrowsAsync<FormatException>(
+            () => badSite.ExtractAsync("https://video.example/watch/abc", context, CancellationToken.None),
+            "坏 JSON 应抛 FormatException");
+
+        // 空 formats：无可用流 → 放弃认领
+        var emptySite = new YtDlpSite((_, _) => Task.FromResult<string?>("""{ "id": "x", "title": "t", "formats": [] }"""));
+        var empty = await emptySite.ExtractAsync("https://video.example/watch/abc", context, CancellationToken.None);
+        That(empty is null, "无可用流应放弃认领（回退协议探测）");
+
+        // 框架级：坏 JSON → 回退协议探测原 URL
+        var registry = new ProtocolDriverRegistry(new KernelOptions
+        {
+            EnableYtDlp = true,
+            YtDlpRunner = (_, _) => Task.FromResult<string?>("{oops"),
+        }, ProbeHttp);
+        var fell = await registry.ProbeAsync(server.Base + "ytd2/page.html", null, null, CancellationToken.None);
+        var fellPlan = AssertPlan<TransferPlan.ByteRanges>(fell, "坏 JSON 应回退协议探测");
+        Equal(server.Base + "ytd2/page.html", fellPlan.Url, "回退计划应指向原始 URL");
+    }
 }

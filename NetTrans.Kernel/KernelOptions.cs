@@ -115,4 +115,18 @@ public sealed class KernelOptions
     /// 本地 fixture 服务器，也可用于反代加速。null/缺省 = 站点默认端点。
     /// </summary>
     public IReadOnlyDictionary<string, string>? SiteApiBases { get; set; }
+
+    /// <summary>
+    /// 把 yt-dlp 注册为兜底站点提取器：内置站点（Bilibili/X/YouTube）不认领的
+    /// http(s) 页面交给 yt-dlp --dump-single-json 解析（需已安装 yt-dlp；
+    /// 未安装时诚实降级回协议探测，见 <see cref="Sites.YtDlpSite"/>）。
+    /// </summary>
+    public bool EnableYtDlp { get; set; }
+
+    /// <summary>
+    /// yt-dlp 运行槽：给定页面 URL，返回 <c>yt-dlp --dump-single-json</c> 的
+    /// stdout；返回 null = 二进制不可用（诚实降级）。null = 从 PATH 运行 yt-dlp。
+    /// 测试经此注入 fixture 输出，不真跑外部进程。
+    /// </summary>
+    public Func<string, CancellationToken, Task<string?>>? YtDlpRunner { get; set; }
 }

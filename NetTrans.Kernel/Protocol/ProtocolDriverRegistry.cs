@@ -31,6 +31,8 @@ public sealed class ProtocolDriverRegistry
         _sites.Register(new BilibiliSite());
         _sites.Register(new TwitterSite());
         _sites.Register(new YouTubeSite());
+        // 兜底提取器必须最后注册：CanHandle 声称一切 http(s) URL，注册顺序保证内置站点优先
+        if (_options.EnableYtDlp) _sites.Register(new YtDlpSite(_options.YtDlpRunner));
     }
 
     public void Register(IProtocolDriver driver) => _drivers[driver.Protocol] = driver;

@@ -11,7 +11,7 @@ using NetTrans.Kernel.Transfer;
 namespace NetworkTests;
 
 /// <summary>
-/// NetTrans.Kernel 网络层测试（20 个方向，含站点提取器框架）。断言全部基于内核源码与 BCL 的真实行为；
+/// NetTrans.Kernel 网络层测试（21 个方向，含站点提取器框架与 yt-dlp 兜底）。断言全部基于内核源码与 BCL 的真实行为；
 /// 确认的内核问题以"已知失败"标注，不强行 PASS。
 /// （历史注：2b filename 引号转义与 7b HLS 相对变体 URL 曾是已知内核缺陷，均已修复。）
 /// </summary>
@@ -77,6 +77,9 @@ internal sealed partial class Program : TestKit
         await RunAsync("20c. Bilibili 提取器单元：分P选择/画质标签/错误路径", () => BilibiliExtractorUnitAsync(server));
         await RunAsync("20d. X/Twitter：变体排序与 registry 选择", () => TwitterAsync(server));
         await RunAsync("20e. YouTube：直链格式选择/加密格式拒绝/404 顺延下一流", () => YouTubeAsync(server));
+        await RunAsync("21a. yt-dlp 映射单元：formats 过滤/排序/字幕/流头", YtDlpMappingUnitAsync);
+        await RunAsync("21b. yt-dlp 注册表：兜底命中最优流/默认关闭/缺二进制回退", () => YtDlpRegistryAsync(server));
+        await RunAsync("21c. yt-dlp 坏输出与空 formats：异常回退/放弃认领", () => YtDlpBadOutputAsync(server));
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
